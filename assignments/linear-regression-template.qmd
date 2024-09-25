@@ -23,6 +23,7 @@ library(broom)
 ## Step 1
 
 ```{r}
+#| label: data-read-in
 #| message: false
 ins <- read_csv(here::here("data", "insurance_costs_1.csv"))
 ```
@@ -32,6 +33,7 @@ ins <- read_csv(here::here("data", "insurance_costs_1.csv"))
 #### Q1
 
 ```{r}
+#| label: data-summary
 ins %>% 
   count()
 
@@ -42,6 +44,7 @@ ins %>%
 #### Q2
 
 ```{r}
+#| label: clean-data
 ins <- ins %>%
   mutate(
     sex = as_factor(sex),
@@ -53,6 +56,7 @@ ins <- ins %>%
 #### Q3
 
 ```{r}
+#| label: data-exploration
 ### Plot 1
 ins %>%
   ggplot(mapping = aes(x = age, y = charges/1000, color = smoker)) +
@@ -95,6 +99,7 @@ ins %>%
 #### Q4
 
 ```{r}
+#| label: age-model
 lin_reg_spec <- linear_reg() %>%
   set_mode("regression") %>%
   set_engine("lm")
@@ -106,6 +111,7 @@ ins_lm_fit <- lin_reg_spec %>%
 #### Q5
 
 ```{r}
+#| label: age-coefs
 # To get coefficient estimates, SEs, p-values, and CIs
 tidy(ins_lm_fit) 
 ```
@@ -113,12 +119,14 @@ tidy(ins_lm_fit)
 #### Q6
 
 ```{r}
+#| label: age-metrics
 # To model summary statistics
 glance(ins_lm_fit)
 ```
 
 #### Q7
 ```{r}
+#| label: age*sex-model
 ins_lm_fit2 <- lin_reg_spec %>%
   fit(charges ~ age*sex, data = ins) 
 
