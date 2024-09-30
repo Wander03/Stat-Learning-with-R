@@ -1,0 +1,433 @@
+---
+title: "Assignment 1: Linear Models"
+author: "Andrew Kerr"
+format: 
+  html:
+    code-fold: true
+    code-line-numbers: true
+    code-tools: true
+    embed-resources: true
+editor: visual
+---
+
+```{r}
+#| label: packages
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(tidymodels)
+library(broom)
+library(kableExtra)
+```
+
+## Step 1
+
+```{r}
+#| label: data-read-in
+#| message: false
+ins <- read_csv(here::here("data", "insurance_costs_1.csv"))
+```
+
+## Step 2
+
+#### Q1
+
+```{r}
+#| label: data-summary
+ins %>% 
+  count()
+
+ins %>%
+  summary() %>%
+  kable()
+```
+
+#### Q2
+
+```{r}
+#| label: clean-data
+ins <- ins %>%
+  mutate(
+    sex = as_factor(sex),
+    smoker = as_factor(smoker),
+    region = as_factor(region)
+  )
+```
+
+#### Q3
+
+```{r}
+#| label: data-exploration
+### Plot 1
+ins %>%
+  ggplot(mapping = aes(x = age, y = charges/1000, color = smoker)) +
+  geom_point() +
+  scale_y_continuous(labels = scales::label_dollar()) +
+  scale_x_continuous(labels = function(x){paste(x, 'yrs')}) +
+  labs(
+    title = 'Plot 1',
+    x = 'Age (years)',
+    y = 'Charges (thousands of dollars)',
+    color = 'Smoker') +
+  theme_bw()
+
+### Plot 2
+ins %>%
+  ggplot(mapping = aes(x = sex, y = charges/1000, fill = region)) +
+  geom_boxplot() +
+  scale_y_continuous(labels = scales::label_dollar()) +
+  scale_x_discrete(labels = c('Female', 'Male')) +
+  labs(
+    title = 'Plot 2',
+    x = 'Sex',
+    y = 'Charges (thousands of dollars)',
+    fill = 'Region'
+  ) +
+  theme_bw()
+
+### Plot 3
+ins %>%
+  ggplot(mapping = aes(x = bmi, y = charges/1000, color = smoker)) +
+  geom_point() +
+  scale_y_continuous(labels = scales::label_dollar()) +
+  labs(
+    title = 'Plot 3',
+    x = 'BMI',
+    y = 'Charges (thousands of dollars)',
+    color = 'Smoker') +
+  theme_bw()
+```
+
+In plot 1 we see three bands of points. The lowest band (charged least for health insurance) is comprised completely of non-smokers, the highest band (charged most for health insurance) is comprised completely of smokers, and the middle-most band is a mix of smokers and non-smokers.
+
+Plot 2 reveals that the variability in charges across regions and sex is fairly constant, aside from those in the southeast where the variability is greater for both sex's. The mean charge across region and sex is also fairly consistent (\~\$10k), however the mean charge for males in the northeast is slightly higher.
+
+Lastly, plot 3 shoes us that charges for non-smokers does not depend on BMI, but on the other hand smokers with a BMI less than 30 tend to have lower charges than smokers with a BMI greater than 30.
+
+## Step 3
+
+#### Q4
+
+```{r}
+#| label: age-model
+lin_reg_spec <- linear_reg() %>%
+  set_mode("regression") %>%
+  set_engine("lm")
+
+ins_lm_fit <- lin_reg_spec %>%
+  fit(charges ~ age, data = ins) 
+```
+
+#### Q5
+
+```{r}
+#| label: age-coefs
+# To get coefficient estimates, SEs, p-values, and CIs
+tidy(ins_lm_fit) %>%
+  kable()
+```
+
+-   intercept: For an individual with no dependents who is 0 years old, the average cost of health insurance is \$3,611.80.
+
+-   age: For each 1-year increase in age, the average cost of health care for an individual with no dependents increases by \$228.80.
+
+#### Q6
+
+```{r}
+#| label: age-metrics
+# To model summary statistics
+glance(ins_lm_fit) %>%
+  kable()
+```
+
+The small p-value associated with age (\<.001) tells us that age is a significant predictor of charges. With an $R^2$ of 0.099, roughly 10% of the variability in charges is explained by age. Since this value of $R^2$ is low, it is likely that other variables no in the model are important predictors.
+
+#### Q7
+
+```{r}
+#| label: age*sex-model
+ins_lm_fit2 <- lin_reg_spec %>%
+  fit(charges ~ age*sex, data = ins) 
+
+tidy(ins_lm_fit2) %>%
+  kable()
+```
+
+#### Q8
+
+-   intercept: For a female individual with no dependents who is 0 years old, the average cost of health insurance is \$2,763.40.
+
+-   age: For each 1-year increase in age for females, the average cost of health care for an individual with no dependents increases by \$243.08.
+
+-   sex: Holding age constant, males with no dependents pay, on average, \$1,804.77 more in health insurance than females.
+
+-   age\*sex: For each 1-year increase in age for males, the average cost of health care for an individual with no dependents increases by \$30.40 less dollars.
+
+#### Q9
+
+No, it does not seem that the relationship between age and cost differs based on someone's sex. The p-value for the interaction term between age and sex is large(.65), suggesting that the interaction is not significant.
+
+#### Q10
+
+```{r}
+#| label: Q10
+glance(ins_lm_fit2)$r.squared
+glance(ins_lm_fit)$r.squared
+```
+
+We were able to explain an additional 0.12% in charges by adding sex (and its interaction) into our model.
+
+#### Q11
+
+```{r}
+#| label: age*smoker-model
+ins_lm_fit3 <- lin_reg_spec %>%
+  fit(charges ~ age*smoker, data = ins) 
+
+tidy(ins_lm_fit3) %>%
+  kable()
+```
+
+#### Q12
+
+```{r}
+#| label: Q12
+ins %>%
+  mutate(
+    m2_pred = predict(ins_lm_fit2, new_data = .)$.pred,
+    m3_pred = predict(ins_lm_fit3, new_data = .)$.pred,
+    m2_resid = charges - m2_pred,
+    m3_resid = charges - m3_pred,
+  ) %>%
+  summarise(
+    sex_mse = mean(m2_resid^2),
+    smoker_mse = mean(m3_resid^2),
+    sex_R2 = glance(ins_lm_fit2)$r.squared,
+    smoker_R2 = glance(ins_lm_fit3)$r.squared
+  ) %>%
+  kable()
+```
+
+The smoker model better fits the data due to its smaller MSE and larger $R^2$ value.
+
+## Step 4
+
+#### Q13
+
+```{r}
+#| label: age+bmi-model
+ins_lm_fit4 <- lin_reg_spec %>%
+  fit(charges ~ age + bmi, data = ins) 
+
+tidy(ins_lm_fit4) %>%
+  kable()
+```
+
+#### Q14
+
+-   intercept: For an individual with no dependents who is 0 years old and has a bmi of 0, the average cost of health insurance is -\$4,627.53 (can this be me?).
+
+-   age: For each 1-year increase in age, the average cost of health care for an individual with no dependents increases by \$216.30, holding bmi constant.
+
+-   bmi: For each 1-unit increase in bmi, the average cost of health care for an individual with no dependents increases by \$283.20, holding age constant.
+
+#### Q15
+
+```{r}
+#| label: Q15
+glance(ins_lm_fit3)$r.squared
+glance(ins_lm_fit4)$r.squared
+```
+
+Compared to the model with smoker, this model explains 64.03% less variability in charges.
+
+#### Q16
+
+```{r}
+#| label: Q16
+ins %>%
+  mutate(
+    m3_pred = predict(ins_lm_fit3, new_data = .)$.pred,
+    m4_pred = predict(ins_lm_fit4, new_data = .)$.pred,
+    m3_resid = charges - m3_pred,
+    m4_resid = charges - m4_pred,
+  ) %>%
+  summarise(
+    smoker_rmse = sqrt(mean(m3_resid^2)),
+    bmi_rmse = sqrt(mean(m4_resid^2)),
+  ) %>%
+  kable()
+
+# Can also do this if saved predicted
+# rmse(truth = charges, estimate = m3_pred)
+# rmse(truth = charges, estimate = m4_pred)
+```
+
+The RMSE of the smoker model is smaller than that of the bmi model!
+
+#### Q17
+
+```{r}
+#| label: age+age2-model
+ins_lm_fit5 <- lin_reg_spec %>%
+  fit(charges ~ poly(age, 2), data = ins) 
+
+tidy(ins_lm_fit5) %>%
+  kable()
+```
+
+#### Q18
+
+```{r}
+#| label: Q18
+ins %>%
+  mutate(
+    m_pred = predict(ins_lm_fit, new_data = .)$.pred,
+    m5_pred = predict(ins_lm_fit5, new_data = .)$.pred,
+    m_resid = charges - m_pred,
+    m5_resid = charges - m5_pred,
+  ) %>%
+  summarise(
+    age_mse = mean(m_resid^2),
+    age2_mse = mean(m5_resid^2),
+    age_R2 = glance(ins_lm_fit)$r.squared,
+    age2_R2 = glance(ins_lm_fit5)$r.squared
+  ) %>%
+  kable()
+```
+
+The MSE for the new age model (with $age^2$) is slightly smaller, and the $R^2$ value is slightly larger (by less than .01%).
+
+#### Q19
+
+```{r}
+#| label: Q19
+ins_lm_fit6 <- lin_reg_spec %>%
+  fit(charges ~ poly(age, 4), data = ins) 
+
+ins %>%
+  mutate(
+    m_pred = predict(ins_lm_fit, new_data = .)$.pred,
+    m6_pred = predict(ins_lm_fit6, new_data = .)$.pred,
+    m_resid = charges - m_pred,
+    m6_resid = charges - m6_pred,
+  ) %>%
+  summarise(
+    age_mse = mean(m_resid^2),
+    age4_mse = mean(m6_resid^2),
+    age_R2 = glance(ins_lm_fit)$r.squared,
+    age4_R2 = glance(ins_lm_fit6)$r.squared
+  ) %>%
+  kable()
+```
+
+The degree 4 model has a smaller MSE and slightly larger $R^2$ value.
+
+#### Q20
+
+According to the MSE and $R^2$ values, the best model is the age\*smoker model.
+
+#### Q21
+
+```{r}
+#| label: Q21
+ins %>%
+  mutate(m3_pred = predict(ins_lm_fit3, new_data = .)$.pred) %>%
+  ggplot() +
+  geom_point(mapping = aes(x = age, y = charges, color = smoker)) +
+  geom_line(mapping = aes(x = age, y = m3_pred, color = smoker)) +
+  scale_y_continuous(labels = scales::label_dollar()) +
+  scale_x_continuous(labels = function(x){paste(x, 'yrs')}) +
+  scale_color_manual(values = c("yes" = "firebrick", "no" = "cornflowerblue")) +
+  labs(
+    title = 'Charges by Age and Smoking Status',
+    x = 'Age',
+    y = 'Health Insurance Charges',
+    color = 'Smoker') +
+  theme_bw()
+
+```
+
+## Step 5
+
+```{r}
+#| label: data-read-in-2
+#| message: false
+ins2 <- read_csv(here::here("data", "insurance_costs_2.csv"))
+```
+
+#### Q22
+
+```{r}
+#| label: Q22
+lm_age <- lin_reg_spec %>%
+  fit(charges ~ age, data = ins) 
+
+lm_age_bmi <- lin_reg_spec %>%
+  fit(charges ~ age + bmi, data = ins) 
+
+lm_age_bmi_smoker <- lin_reg_spec %>%
+  fit(charges ~ age + bmi + smoker, data = ins) 
+
+lm_age_bmi_smoker_interaction <- lin_reg_spec %>%
+  fit(charges ~ (age + bmi) * smoker, data = ins) 
+```
+
+#### Q23
+
+```{r}
+#| label: Q23
+ins2 <- ins2 %>%
+  mutate(
+    pred_age = predict(lm_age, new_data = .)$.pred,
+    pred_age_bmi = predict(lm_age_bmi, new_data = .)$.pred,
+    pred_age_bmi_smoker = predict(lm_age_bmi_smoker, new_data = .)$.pred,
+    pred_age_bmi_smoker_interaction = predict(lm_age_bmi_smoker_interaction, new_data = .)$.pred
+  )
+```
+
+#### Q24
+
+```{r}
+ins2 %>%
+  mutate(
+    resid_age = charges - pred_age,
+    resid_age_bmi = charges - pred_age_bmi,
+    resid_age_bmi_smoker = charges - pred_age_bmi_smoker,
+    resid_age_bmi_smoker_interaction = charges - pred_age_bmi_smoker_interaction,
+  ) %>%
+  summarise(
+    mse_age = mean(resid_age^2),
+    mse_age_bmi = mean(resid_age_bmi^2),,
+    mse_age_bmi_smoker = mean(resid_age_bmi_smoker^2),,
+    mse_age_bmi_smoker_interaction = mean(resid_age_bmi_smoker_interaction^2),
+  ) %>%
+  kable()
+```
+
+Based on the MSE, the best model to use is the most complex model with age, bmi, and the smoker interactions.
+
+#### Q25
+
+```{r}
+#| label: Q25
+ins2 %>%
+  mutate(
+    resid_age_bmi_smoker_interaction = charges - pred_age_bmi_smoker_interaction
+    ) %>%
+  ggplot(
+    aes(
+      x = pred_age_bmi_smoker_interaction, 
+      y = resid_age_bmi_smoker_interaction
+      )
+    ) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = 'dashed', color = 'red') +
+  labs(
+    x = 'Fitted Values',
+    y = 'Residuals',
+    title = 'Fitted v. Residuals Plot'
+  ) +
+  theme_bw()
+```
