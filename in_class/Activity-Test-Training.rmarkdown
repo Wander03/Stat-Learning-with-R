@@ -12,9 +12,13 @@ execute:
   message: false
 ---
 
+
+
 ## Setup
 
 Declare your libraries:
+
+
 
 ```{r}
 #| label: libraries-r
@@ -23,7 +27,11 @@ library(tidyverse)
 library(tidymodels)
 ```
 
+
+
 ## Code from slides
+
+
 
 ```{r}
 #| label: load-data
@@ -139,6 +147,8 @@ ins_test %>%
           estimate = preds_20)
 ```
 
+
+
 ## Your turn
 
 Suppose you want to fit a regression that predicts `charges` from `age` and `bmi`.
@@ -152,6 +162,8 @@ Consider four models:
 Which model is best according to the **adjusted R-squared** on the training data?
 
 Which model is best according to the **MSE** of the **test** data?
+
+
 
 ```{r}
 m1 <- lr_mod %>%
@@ -174,7 +186,11 @@ glance(m3)$adj.r.squared
 glance(m4)$adj.r.squared
 ```
 
+
+
 Model 1 does the best!
+
+
 
 ```{r}
 ins_test <- ins_test %>%
@@ -210,4 +226,7 @@ ins_test %>%
           estimate = preds_4)
 ```
 
+
+
 Model 3 is the best!
+

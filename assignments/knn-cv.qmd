@@ -1,6 +1,6 @@
 ---
 title: "Assignment 2: Cross-Validation and K-Nearest-Neighbors"
-author: "YOUR NAME HERE"
+author: "Andrew Kerr"
 format: 
   html:
     code-fold: true
@@ -19,6 +19,7 @@ set.seed(3849)
 
 library(tidyverse)
 library(tidymodels)
+library(kableExtra)
 ```
 
 # Instructions

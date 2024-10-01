@@ -68,3 +68,28 @@ Consider four models:
 (No interactions term for any model.)
 
 Which model is best according to a **Cross-Validation study** with 10 splits?
+
+```{r}
+ins_cvs <- vfold_cv(ins, v = 10)
+
+m1 <- lr_mod %>%
+  fit_resamples(charges ~ age + bmi, resamples = ins_cvs)
+
+m2 <- lr_mod %>%
+  fit_resamples(charges ~ age + poly(bmi, 2), resamples = ins_cvs)
+
+m3 <- lr_mod %>%
+  fit_resamples(charges ~ poly(age, 2) + bmi, resamples = ins_cvs)
+
+m4 <- lr_mod %>%
+  fit_resamples(charges ~ poly(age, 2) + poly(bmi, 2), resamples = ins_cvs)
+```
+
+```{r}
+m1 %>% collect_metrics()
+m2 %>% collect_metrics()
+m3 %>% collect_metrics()
+m4 %>% collect_metrics()
+```
+
+Model 1 wins!
