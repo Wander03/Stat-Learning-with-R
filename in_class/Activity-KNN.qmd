@@ -1,0 +1,340 @@
+---
+title: "K Nearest Neighbors"
+author: "Andrew Kerr"
+format: 
+  html:
+    code-fold: true
+    code-line-numbers: true
+    code-tools: true
+    self-contained: true
+editor: source
+execute:
+  message: false
+---
+
+## Setup
+
+Declare your libraries:
+
+```{r}
+#| label: libraries-r
+#| include: false
+
+library(tidyverse)
+library(tidymodels)
+library(kknn)
+```
+
+```{r}
+ins <- read_csv("https://www.dropbox.com/s/bocjjyo1ehr5auz/insurance.csv?dl=1")
+```
+
+## Activity Break 1: KNN modeling
+
+#### Code from lecture
+
+Establish our model:
+
+```{r}
+knn_mod <- nearest_neighbor(neighbors = 5) %>%
+  set_mode("regression") %>% 
+  set_engine("kknn")
+```
+
+Fit our model:
+
+```{r}
+knn_fit_1 <- knn_mod %>%
+  fit(charges ~ age, data = ins)
+```
+
+Summarize our model:
+
+```{r}
+knn_fit_1$fit %>% summary()
+```
+
+#### Your task:
+
+Use cross validation to choose between a KNN model with 5 neighbors that (1) uses only age versus (2) using both age and bmi.
+
+```{r}
+ins_cvs <- vfold_cv(ins, v = 10)
+
+knn_fit_1 <- knn_mod %>%
+  fit_resamples(charges ~ age, resamples = ins_cvs)
+
+knn_fit_2 <- knn_mod %>%
+  fit_resamples(charges ~ age + bmi, resamples = ins_cvs)
+
+knn_fit_1 %>% collect_metrics() %>% filter(.metric == 'rmse') %>% pull(mean)
+knn_fit_2 %>% collect_metrics() %>% filter(.metric == 'rmse') %>% pull(mean)
+```
+
+How do these models compare to the least-squares regression approach from Tuesday?
+
+```{r}
+lr_mod <- linear_reg() %>%
+  set_mode("regression") %>%
+  set_engine("lm")
+
+lr_fit_1 <- lr_mod %>%
+  fit_resamples(charges ~ age, resamples = ins_cvs)
+
+lr_fit_2 <- lr_mod %>%
+  fit_resamples(charges ~ age + bmi, resamples = ins_cvs)
+
+lr_fit_1 %>% collect_metrics() %>% filter(.metric == 'rmse') %>% pull(mean)
+lr_fit_2 %>% collect_metrics() %>% filter(.metric == 'rmse') %>% pull(mean)
+```
+
+The least squares regression approachs using CV both performed better (have lower 
+RMSE) than both KNN models above.
+
+How do these models compare to a KNN model with 10 neighbors?
+
+```{r}
+knn_mod_10 <- nearest_neighbor(neighbors = 10) %>%
+  set_mode("regression") %>% 
+  set_engine("kknn")
+
+knn_fit_1 <- knn_mod_10 %>%
+  fit_resamples(charges ~ age, resamples = ins_cvs)
+
+knn_fit_2 <- knn_mod_10 %>%
+  fit_resamples(charges ~ age + bmi, resamples = ins_cvs)
+
+knn_fit_1 %>% collect_metrics() %>% filter(.metric == 'rmse') %>% pull(mean)
+knn_fit_2 %>% collect_metrics() %>% filter(.metric == 'rmse') %>% pull(mean)
+```
+
+The KNN models with 10 neighbors both have smaller RMSE values than the models 
+with 5 neighbors.
+
+## Activity Break 2: Normalizing variables
+
+#### Code from lecture
+
+Recipe:
+
+```{r}
+ins_rec <- recipe(charges ~ age + region, data = ins) %>%
+  step_dummy(region)
+
+ins_rec
+```
+
+Workflow:
+
+```{r}
+ins_wflow <- workflow() %>%
+  add_recipe(ins_rec) %>%
+  add_model(knn_mod)
+
+ins_fit <- ins_wflow %>% fit(ins) 
+
+ins_fit %>% pull_workflow_fit()
+```
+
+Normalize workflow:
+
+```{r}
+ins_rec <- recipe(charges ~ age + region, data = ins) %>%
+  step_dummy(region) %>%
+  step_normalize(age)
+
+ins_wflow <- workflow() %>%
+  add_recipe(ins_rec) %>%
+  add_model(knn_mod)
+
+ins_wflow
+```
+
+Fit:
+
+```{r}
+ins_fit <- ins_wflow %>% fit(ins) 
+
+ins_fit %>% pull_workflow_fit()
+```
+
+#### Your task:
+
+1.Make a KNN model with K = 5, using age, bmi, smoker, and sex 
+
+```{r}
+knn_model <- nearest_neighbor(neighbors = 5) %>%
+  set_mode("regression") %>% 
+  set_engine("kknn")
+
+
+knn_recipe <- recipe(charges ~ age + bmi + smoker + sex, data = ins) %>%
+  step_dummy(all_nominal_predictors())
+
+knn_recipe_2 <- recipe(charges ~ age + bmi + smoker + sex, data = ins) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+
+
+knn_wrkflw <- workflow() %>%
+  add_recipe(knn_recipe) %>%
+  add_model(knn_model)
+
+knn_wrkflw_2 <- workflow() %>%
+  add_recipe(knn_recipe_2) %>%
+  add_model(knn_model)
+
+
+knn_fit <- knn_wrkflw %>% fit(ins) 
+knn_fit %>% pull_workflow_fit()
+
+knn_fit_2 <- knn_wrkflw_2 %>% fit(ins) 
+knn_fit_2 %>% pull_workflow_fit()
+```
+
+2. Compare the model with non-normalized variables to one with normalized variables. Which is better?
+
+They have about the same RMSE values, with the non-normalized being slightly 
+smaller.
+
+## Activity Break 3: Tuning
+
+#### Code from lecture
+
+Set values to try:
+
+```{r}
+k_grid <- grid_regular(neighbors(c(1,50)), 
+                       levels = 25)
+k_grid
+
+```
+
+Make workflow:
+
+```{r}
+knn_mod_tune <- nearest_neighbor(neighbors = tune()) %>%
+  set_engine("kknn") %>%
+  set_mode("regression")
+
+ins_rec <- recipe(charges ~ age + bmi + sex + smoker, data = ins) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+
+ins_wflow <- workflow() %>%
+  add_recipe(ins_rec) %>%
+  add_model(knn_mod_tune)
+```
+
+Fit cross-validations for all values of k:
+
+```{r}
+ins_cv <- vfold_cv(ins, v = 10)
+
+knn_grid_search <-
+  tune_grid(
+    ins_wflow,
+    resamples = ins_cv,
+    grid = k_grid
+  )
+```
+
+```{r}
+knn_grid_search %>% collect_metrics()
+```
+
+```{r}
+knn_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  slice_min(mean)
+```
+
+```{r}
+knn_grid_search %>% 
+  collect_metrics() %>%
+  ggplot(aes(x = neighbors, y = mean, color = .metric)) +
+  geom_line()
+```
+
+#### Your task:
+
+Find the best KNN model
+
+```{r}
+k_grid <- grid_regular(neighbors(c(1,100)), 
+                       levels = 100)
+
+
+knn_mod_tune <- nearest_neighbor(neighbors = tune()) %>%
+  set_engine("kknn") %>%
+  set_mode("regression")
+
+ins_rec <- recipe(charges ~ age + bmi + sex + smoker, data = ins) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+
+ins_wflow <- workflow() %>%
+  add_recipe(ins_rec) %>%
+  add_model(knn_mod_tune)
+
+
+ins_cv <- vfold_cv(ins, v = 10)
+
+knn_grid_search <-
+  tune_grid(
+    ins_wflow,
+    resamples = ins_cv,
+    grid = k_grid
+  )
+
+
+knn_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  slice_min(mean, n = 10)
+
+knn_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "rsq") %>%
+  slice_max(mean, n = 10)
+```
+
+```{r}
+knn_grid_search %>% 
+  collect_metrics() %>%
+  ggplot(aes(x = neighbors, y = mean, color = .metric)) +
+  geom_line()
+```
+
+Looking at the top 10 for RMSE and R^2, the same k values appear as the best for 
+both which is 14.
+
+```{r}
+knn_model <- nearest_neighbor(neighbors = 14) %>%
+  set_mode("regression") %>% 
+  set_engine("kknn")
+
+knn_recipe <- recipe(charges ~ age + bmi + smoker + sex, data = ins) %>%
+  step_dummy(all_nominal_predictors())
+
+knn_wrkflw <- workflow() %>%
+  add_recipe(knn_recipe) %>%
+  add_model(knn_model)
+
+knn_fit <- knn_wrkflw %>% fit(ins) 
+knn_pred <- knn_fit %>% predict(ins)
+knn_resid <- ins$charges - knn_pred$.pred
+
+
+ggplot() +
+  geom_point(aes(x = ins$charges, y = knn_resid)) +
+  geom_hline(yintercept = 0, linetype = 'dashed', color = 'firebrick') +
+  labs(
+    x = 'Fitted Values',
+    y = 'Residuals',
+    title = 'Fitted v. Residuals'
+  ) +
+  theme_bw()
+```
+
