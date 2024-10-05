@@ -72,10 +72,7 @@ whr_clean %>%
     theme_bw()
 ```
 
-The happiness in the world is not changing linearly over time since we see a low
-$R^2$ value of approx. 0, and a large p-value for the year coefficient. 
-Additionally, the residual plot shows a linear pattern, meaning we are using 
-the wrong model.
+The happiness in the world is not changing linearly over time since we see a low $R^2$ value of approx. 0, and a large p-value for the year coefficient. Additionally, the residual plot shows a linear pattern, meaning we are using the wrong model.
 
 2.  Was the happiness score approximately the same in all the years? Convert `year` to a factor variable, and fit a simple linear model to address this question.
 
@@ -90,10 +87,8 @@ lr_m2 <- lin_reg %>%
 
 tidy(lr_m2) %>% kable()
 ```
- No, the happiness score was not approx. the same in all the years. We see 
- highly significant p-values for all years compared to the baseline year of 
- 2005, with 2005 being on average around 1 unit of happiness score greater than
- all the other years.
+
+No, the happiness score was not approx. the same in all the years. We see highly significant p-values for all years compared to the baseline year of 2005, with 2005 being on average around 1 unit of happiness score greater than all the other years.
 
 ## Part 2: Happiness Equation
 
@@ -102,13 +97,65 @@ tidy(lr_m2) %>% kable()
 ```{r}
 #| label: Q3
 
-lr_m2 <- lin_reg %>%
-  fit(happiness_score ~ year, data = whr_clean)
+lr_recipe <- recipe(
+  happiness_score ~ log_gdp_per_capita 
+  + healthy_life_expectancy 
+  + social_support 
+  + freedom_to_make_life_choices 
+  + generosity 
+  + perceptions_of_corruption,
+  data = whr_clean
+  ) %>%
+  step_normalize(all_numeric_predictors())
+
+lr_wrkflw <- workflow() %>%
+  add_recipe(lr_recipe) %>%
+  add_model(lin_reg)
+
+lr_wrkflw  %>%
+  fit(whr_clean) %>%
+  pull_workflow_fit()
 ```
+
+-   intercept: When all predictors are at there minimum values, the average happiness score is 5.46.
+-   log_gdp_per_capita: If log GDP per capita moves from its lowest observed value to its highest, the average happiness score increases by 0.41 units.
+-   healthy_life_expectancy: Moving from the lowest observed life expectancy to the highest, the average happiness score increases by 0.23 units.
+-   social_support: Moving from the lowest observed social support to the highest, the average happiness score increases by 0.27 units.
+-   freedom_to_make_life_choices: If freedom to make life choices moves from its lowest observed value to its highest, the average happiness score increases by 0.15 units.
+-   generosity: If the generosity of society moves from its lowest observed value to its highest, the average happiness score increases by 0.12 units.
+-   perceptions_of_corruption: If perceptions of corruption in government moves from its lowest observed value to its highest, the average happiness score decreases by 0.12 units.
 
 4.  Which measures of life quality does the WHR consider to be most important to a country's happiness?
 
+Log GDP per capita is the most important to a country's happiness since it has the 
+larges coefficient, followed by social support and healthy life expectancy.
+
 # Predicting Life Expectancy -- Exploring Linear Models
+
+```{r}
+#| label: pred-life-expectancy
+
+base_recipe <- recipe(
+  healthy_life_expectancy ~ log_gdp_per_capita 
+  + social_support 
+  + freedom_to_make_life_choices 
+  + generosity 
+  + perceptions_of_corruption
+  + regional_indicator,
+  data = whr_clean
+  )
+
+life_wrkflw <- workflow() %>%
+  add_recipe(base_recipe) %>%
+  add_model(lin_reg)
+
+life_wrkflw  %>%
+  fit(whr_clean) %>%
+  pull_workflow_fit() %>%
+  tidy() %>%
+  kable()
+```
+
 
 ## Part 1: Summary of Approach
 
