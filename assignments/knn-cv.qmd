@@ -30,7 +30,15 @@ Your document should also be clearly organized, so that it is easy for a reader 
 
 ```{r}
 #| label: load-data
+#| message: false
+whr_clean <- read_csv(here::here('data', 'whr_clean.csv'))
 
+whr_clean <- whr_clean %>%
+  mutate(
+    regional_indicator = as_factor(regional_indicator)
+  )
+
+whr_clean %>% summary() %>% kable()
 ```
 
 # Happiness Scores
@@ -39,23 +47,72 @@ Your document should also be clearly organized, so that it is easy for a reader 
 
 1.  Is the happiness in the world changing linearly over time? Fit a simple linear model and interpret the results to address this question.
 
+```{r}
+#| label: Q1
+
+lin_reg <- linear_reg() %>%
+  set_engine("lm") %>%
+  set_mode("regression")
+
+lr_m1 <- lin_reg %>%
+  fit(happiness_score ~ year, data = whr_clean)
+
+whr_clean <- whr_clean %>%
+  mutate(
+    prediction = predict(lr_m1, new_data = whr_clean)$.pred,
+    residuals = happiness_score - prediction
+    )
+
+glance(lr_m1) %>% kable()
+tidy(lr_m1) %>% kable()
+
+whr_clean %>%
+  ggplot(aes(x = happiness_score, y = residuals)) +
+    geom_point() +
+    theme_bw()
+```
+
+The happiness in the world is not changing linearly over time since we see a low
+$R^2$ value of approx. 0, and a large p-value for the year coefficient. 
+Additionally, the residual plot shows a linear pattern, meaning we are using 
+the wrong model.
+
 2.  Was the happiness score approximately the same in all the years? Convert `year` to a factor variable, and fit a simple linear model to address this question.
+
+```{r}
+#| label: Q2
+
+whr_clean <- whr_clean %>%
+  mutate(year = as_factor(year))
+
+lr_m2 <- lin_reg %>%
+  fit(happiness_score ~ year, data = whr_clean)
+
+tidy(lr_m2) %>% kable()
+```
+ No, the happiness score was not approx. the same in all the years. We see 
+ highly significant p-values for all years compared to the baseline year of 
+ 2005, with 2005 being on average around 1 unit of happiness score greater than
+ all the other years.
 
 ## Part 2: Happiness Equation
 
-3.  How is each of the six measures of life quality weighted in calculating this score?
+3.  How is each of the six measures of life quality weighted in calculating this score? Fit a model to estimate the weights, and interpret the coefficients.
 
-4.  Fit a model to estimate the weights, and interpret the coefficients.
+```{r}
+#| label: Q3
 
-5.  Which measures of life quality does the WHR consider to be most important to a country's happiness?
+lr_m2 <- lin_reg %>%
+  fit(happiness_score ~ year, data = whr_clean)
+```
+
+4.  Which measures of life quality does the WHR consider to be most important to a country's happiness?
 
 # Predicting Life Expectancy -- Exploring Linear Models
 
 ## Part 1: Summary of Approach
 
-6.  Write a short description (bullet points are fine) of your process in narrowing down your model.
-
-7.  How did you approach this problem, without spending hours upon hours fitting and cross-validating zillions of models?
+6.  Write a short description (bullet points are fine) of your process in narrowing down your model. How did you approach this problem, without spending hours upon hours fitting and cross-validating zillions of models?
 
 ## Part 2: Three Candidates
 

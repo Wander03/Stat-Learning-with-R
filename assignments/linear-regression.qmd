@@ -3,7 +3,7 @@ title: "Assignment 1: Linear Models"
 author: "Andrew Kerr"
 format: 
   html:
-    code-fold: true
+    code-fold: show
     code-line-numbers: true
     code-tools: true
     embed-resources: true
