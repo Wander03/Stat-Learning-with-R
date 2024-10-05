@@ -145,6 +145,9 @@ base_recipe <- recipe(
   data = whr_clean
   )
 
+poly_recipe <- base_recipe %>%
+  step_select(!)
+
 life_wrkflw <- workflow() %>%
   add_recipe(base_recipe) %>%
   add_model(lin_reg)
@@ -152,7 +155,7 @@ life_wrkflw <- workflow() %>%
 life_wrkflw  %>%
   fit(whr_clean) %>%
   pull_workflow_fit() %>%
-  tidy() %>%
+  glance() %>%
   kable()
 ```
 
