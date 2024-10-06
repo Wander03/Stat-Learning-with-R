@@ -41,6 +41,46 @@ whr_clean <- whr_clean %>%
 whr_clean %>% summary() %>% kable()
 ```
 
+```{r}
+#| label: cleaning NA
+
+whr_clean %>%
+  filter(if_any(everything(), is.na))
+
+whr_clean <- whr_clean %>%
+  mutate(
+    regional_indicator = case_when(
+      is.na(regional_indicator) ~ "Other",
+      TRUE ~ regional_indicator
+    ),
+    log_gdp_per_capita = case_when(
+      is.na(log_gdp_per_capita) ~ mean(log_gdp_per_capita, na.rm = TRUE),
+      TRUE ~ log_gdp_per_capita
+    ),
+    healthy_life_expectancy = case_when(
+      is.na(healthy_life_expectancy) ~ mean(healthy_life_expectancy, na.rm = TRUE),
+      TRUE ~ healthy_life_expectancy
+    ),
+    social_support = case_when(
+      is.na(social_support) ~ mean(social_support, na.rm = TRUE),
+      TRUE ~ social_support
+    ),
+    freedom_to_make_life_choices = case_when(
+      is.na(freedom_to_make_life_choices) ~ mean(freedom_to_make_life_choices, na.rm = TRUE),
+      TRUE ~ freedom_to_make_life_choices
+    ),
+    generosity = case_when(
+      is.na(generosity) ~ mean(generosity, na.rm = TRUE),
+      TRUE ~ generosity
+    ),
+    perceptions_of_corruption = case_when(
+      is.na(perceptions_of_corruption) ~ mean(perceptions_of_corruption, na.rm = TRUE),
+      TRUE ~ perceptions_of_corruption
+    ),
+    regional_indicator = as_factor(regional_indicator)
+  )
+```
+
 # Happiness Scores
 
 ## Part 1: Happiness Over Time
@@ -114,26 +154,29 @@ lr_wrkflw <- workflow() %>%
 
 lr_wrkflw  %>%
   fit(whr_clean) %>%
-  pull_workflow_fit()
+  extract_fit_parsnip()
 ```
 
 -   intercept: When all predictors are at there minimum values, the average happiness score is 5.46.
 -   log_gdp_per_capita: If log GDP per capita moves from its lowest observed value to its highest, the average happiness score increases by 0.41 units.
 -   healthy_life_expectancy: Moving from the lowest observed life expectancy to the highest, the average happiness score increases by 0.23 units.
--   social_support: Moving from the lowest observed social support to the highest, the average happiness score increases by 0.27 units.
--   freedom_to_make_life_choices: If freedom to make life choices moves from its lowest observed value to its highest, the average happiness score increases by 0.15 units.
--   generosity: If the generosity of society moves from its lowest observed value to its highest, the average happiness score increases by 0.12 units.
--   perceptions_of_corruption: If perceptions of corruption in government moves from its lowest observed value to its highest, the average happiness score decreases by 0.12 units.
+-   social_support: Moving from the lowest observed social support to the highest, the average happiness score increases by 0.28 units.
+-   freedom_to_make_life_choices: If freedom to make life choices moves from its lowest observed value to its highest, the average happiness score increases by 0.16 units.
+-   generosity: If the generosity of society moves from its lowest observed value to its highest, the average happiness score increases by 0.11 units.
+-   perceptions_of_corruption: If perceptions of corruption in government moves from its lowest observed value to its highest, the average happiness score decreases by 0.09 units.
 
 4.  Which measures of life quality does the WHR consider to be most important to a country's happiness?
 
-Log GDP per capita is the most important to a country's happiness since it has the 
-larges coefficient, followed by social support and healthy life expectancy.
+Log GDP per capita is the most important to a country's happiness since it has the larges coefficient, followed by social support and healthy life expectancy.
 
 # Predicting Life Expectancy -- Exploring Linear Models
 
 ```{r}
 #| label: pred-life-expectancy
+
+whr_clean[, c(4, 6:9)] %>% cor()
+
+whr_cvs <- vfold_cv(whr_clean, v = 10)
 
 base_recipe <- recipe(
   healthy_life_expectancy ~ log_gdp_per_capita 
@@ -143,38 +186,396 @@ base_recipe <- recipe(
   + perceptions_of_corruption
   + regional_indicator,
   data = whr_clean
-  )
-
-poly_recipe <- base_recipe %>%
-  step_select(!)
+  ) %>%
+  step_normalize(all_numeric_predictors())
 
 life_wrkflw <- workflow() %>%
   add_recipe(base_recipe) %>%
   add_model(lin_reg)
 
-life_wrkflw  %>%
-  fit(whr_clean) %>%
-  pull_workflow_fit() %>%
-  glance() %>%
-  kable()
+life_wrkflw %>%
+  fit_resamples(resamples = whr_cvs) %>%
+  collect_metrics()
 ```
 
+```{r}
+#| label: full-model
+
+full_recipe <- base_recipe %>%
+  step_interact(terms = ~ log_gdp_per_capita:social_support +
+                 log_gdp_per_capita:freedom_to_make_life_choices +
+                 log_gdp_per_capita:generosity +
+                 log_gdp_per_capita:perceptions_of_corruption +
+                 log_gdp_per_capita:regional_indicator +
+                 social_support:freedom_to_make_life_choices +
+                 social_support:generosity +
+                 social_support:perceptions_of_corruption +
+                 social_support:regional_indicator +
+                 freedom_to_make_life_choices:generosity +
+                 freedom_to_make_life_choices:perceptions_of_corruption +
+                 freedom_to_make_life_choices:regional_indicator +
+                 generosity:perceptions_of_corruption +
+                 generosity:regional_indicator +
+                 perceptions_of_corruption:regional_indicator
+               )
+
+life_wrkflw <- workflow() %>%
+  add_recipe(full_recipe) %>%
+  add_model(lin_reg)
+
+life_wrkflw %>%
+  fit_resamples(resamples = whr_cvs) %>%
+  collect_metrics()
+```
+
+```{r}
+#| label: gdp-models
+
+gdp_recipe <- recipe(
+  healthy_life_expectancy ~ log_gdp_per_capita,
+  data = whr_clean
+  ) %>%
+  step_normalize(all_numeric_predictors())
+
+gdp_2_recipe <- gdp_recipe %>%
+  step_poly(log_gdp_per_capita, degree = 2)
+
+life_wrkflw <- workflow() %>%
+  add_recipe(gdp_recipe) %>%
+  add_model(lin_reg)
+
+life_wrkflw %>%
+  fit_resamples(resamples = whr_cvs) %>%
+  collect_metrics()
+
+life_wrkflw <- workflow() %>%
+  add_recipe(gdp_2_recipe) %>%
+  add_model(lin_reg)
+
+life_wrkflw %>%
+  fit_resamples(resamples = whr_cvs) %>%
+  collect_metrics()
+```
+
+```{r}
+#| label: social-models
+
+social_recipe <- recipe(
+  healthy_life_expectancy ~ social_support,
+  data = whr_clean
+  ) %>%
+  step_normalize(all_numeric_predictors())
+
+social_2_recipe <- social_recipe %>%
+  step_poly(social_support, degree = 2)
+
+life_wrkflw <- workflow() %>%
+  add_recipe(social_recipe) %>%
+  add_model(lin_reg)
+
+life_wrkflw %>%
+  fit_resamples(resamples = whr_cvs) %>%
+  collect_metrics()
+
+life_wrkflw <- workflow() %>%
+  add_recipe(social_2_recipe) %>%
+  add_model(lin_reg)
+
+life_wrkflw %>%
+  fit_resamples(resamples = whr_cvs) %>%
+  collect_metrics()
+```
+
+```{r}
+#| label: freedom-models
+
+gdp_recipe <- recipe(
+  healthy_life_expectancy ~ freedom_to_make_life_choices,
+  data = whr_clean
+  ) %>%
+  step_normalize(all_numeric_predictors())
+
+gdp_2_recipe <- gdp_recipe %>%
+  step_poly(freedom_to_make_life_choices, degree = 2)
+
+life_wrkflw <- workflow() %>%
+  add_recipe(gdp_recipe) %>%
+  add_model(lin_reg)
+
+life_wrkflw %>%
+  fit_resamples(resamples = whr_cvs) %>%
+  collect_metrics()
+
+life_wrkflw <- workflow() %>%
+  add_recipe(gdp_2_recipe) %>%
+  add_model(lin_reg)
+
+life_wrkflw %>%
+  fit_resamples(resamples = whr_cvs) %>%
+  collect_metrics()
+```
+
+```{r}
+#| label: generosity-models
+
+gdp_recipe <- recipe(
+  healthy_life_expectancy ~ generosity,
+  data = whr_clean
+  ) %>%
+  step_normalize(all_numeric_predictors())
+
+gdp_2_recipe <- gdp_recipe %>%
+  step_poly(generosity, degree = 2)
+
+life_wrkflw <- workflow() %>%
+  add_recipe(gdp_recipe) %>%
+  add_model(lin_reg)
+
+life_wrkflw %>%
+  fit_resamples(resamples = whr_cvs) %>%
+  collect_metrics()
+
+life_wrkflw <- workflow() %>%
+  add_recipe(gdp_2_recipe) %>%
+  add_model(lin_reg)
+
+life_wrkflw %>%
+  fit_resamples(resamples = whr_cvs) %>%
+  collect_metrics()
+```
+
+```{r}
+#| label: corruption-models
+
+gdp_recipe <- recipe(
+  healthy_life_expectancy ~ perceptions_of_corruption,
+  data = whr_clean
+  ) %>%
+  step_normalize(all_numeric_predictors())
+
+gdp_2_recipe <- gdp_recipe %>%
+  step_poly(perceptions_of_corruption, degree = 2)
+
+life_wrkflw <- workflow() %>%
+  add_recipe(gdp_recipe) %>%
+  add_model(lin_reg)
+
+life_wrkflw %>%
+  fit_resamples(resamples = whr_cvs) %>%
+  collect_metrics()
+
+life_wrkflw <- workflow() %>%
+  add_recipe(gdp_2_recipe) %>%
+  add_model(lin_reg)
+
+life_wrkflw %>%
+  fit_resamples(resamples = whr_cvs) %>%
+  collect_metrics()
+```
+
+```{r}
+#| label: region-models
+
+gdp_recipe <- recipe(
+  healthy_life_expectancy ~ regional_indicator,
+  data = whr_clean
+  )
+
+life_wrkflw <- workflow() %>%
+  add_recipe(gdp_recipe) %>%
+  add_model(lin_reg)
+
+life_wrkflw %>%
+  fit_resamples(resamples = whr_cvs) %>%
+  collect_metrics()
+```
+
+```{r}
+#| label: reduced-model
+
+reduced_recipe <- recipe(
+  healthy_life_expectancy ~ log_gdp_per_capita 
+  + freedom_to_make_life_choices 
+  + generosity 
+  + regional_indicator,
+  data = whr_clean
+  ) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(regional_indicator)
+
+life_wrkflw <- workflow() %>%
+  add_recipe(reduced_recipe) %>%
+  add_model(lin_reg)
+
+life_wrkflw %>%
+  fit_resamples(resamples = whr_cvs) %>%
+  collect_metrics()
+```
+
+```{r}
+#| label: reduced-interaction-model
+
+reduced_2_recipe <- reduced_recipe %>%
+  step_interact(term = ~ log_gdp_per_capita:freedom_to_make_life_choices
+                + freedom_to_make_life_choices:generosity)
+
+life_wrkflw <- workflow() %>%
+  add_recipe(reduced_2_recipe) %>%
+  add_model(lin_reg)
+
+life_wrkflw %>%
+  fit_resamples(resamples = whr_cvs) %>%
+  collect_metrics()
+```
 
 ## Part 1: Summary of Approach
 
 6.  Write a short description (bullet points are fine) of your process in narrowing down your model. How did you approach this problem, without spending hours upon hours fitting and cross-validating zillions of models?
 
+- All models were fit using 10-Fold CV
+- I created a main effects and full (all two-way interaction) model
+- I created a model for each predictor, as well as their 2nd order poly term
+- I looked a the correlation between each quantitative predictor
+- GDP and social support have a correlation of .68 and freedom to make choices
+and perceptions of corruption have a correlation of -.48. Thus, I removed the 
+two predictors with smaller $R^2$ values in there single predictor models from 
+my main effects model (-social support and -corruption)
+- I tried adding the interactions of somewhat correlated values to my reduced 
+model to see if they would improve the model.
+
 ## Part 2: Three Candidates
 
 8.  Choose the three best candidate models among those you tried.
 
+- full model
+- reduced model
+- reduced interaction model
+
 9.  Supply your code and results for comparing these models, and discuss how you decided which *one* model was the best one.
+
+```{r}
+#| label: Q9
+
+full_recipe <- base_recipe %>%
+  step_interact(terms = ~ log_gdp_per_capita:social_support +
+                 log_gdp_per_capita:freedom_to_make_life_choices +
+                 log_gdp_per_capita:generosity +
+                 log_gdp_per_capita:perceptions_of_corruption +
+                 log_gdp_per_capita:regional_indicator +
+                 social_support:freedom_to_make_life_choices +
+                 social_support:generosity +
+                 social_support:perceptions_of_corruption +
+                 social_support:regional_indicator +
+                 freedom_to_make_life_choices:generosity +
+                 freedom_to_make_life_choices:perceptions_of_corruption +
+                 freedom_to_make_life_choices:regional_indicator +
+                 generosity:perceptions_of_corruption +
+                 generosity:regional_indicator +
+                 perceptions_of_corruption:regional_indicator
+               )
+
+reduced_recipe <- recipe(
+  healthy_life_expectancy ~ log_gdp_per_capita 
+  + freedom_to_make_life_choices 
+  + generosity 
+  + regional_indicator,
+  data = whr_clean
+  ) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(regional_indicator)
+
+reduced_2_recipe <- reduced_recipe %>%
+  step_interact(term = ~ log_gdp_per_capita:freedom_to_make_life_choices
+                + freedom_to_make_life_choices:generosity)
+
+
+full_wrkflw <- workflow() %>%
+  add_recipe(full_recipe) %>%
+  add_model(lin_reg)
+
+reduced_wrkflw <- workflow() %>%
+  add_recipe(reduced_recipe) %>%
+  add_model(lin_reg)
+
+redcued_interaction_wrkflw <- workflow() %>%
+  add_recipe(reduced_2_recipe) %>%
+  add_model(lin_reg)
+
+
+full_tbl <- full_wrkflw %>%
+  fit_resamples(resamples = whr_cvs) %>%
+  collect_metrics()
+
+reduced_tbl <- reduced_wrkflw %>%
+  fit_resamples(resamples = whr_cvs) %>%
+  collect_metrics()
+
+reduced_interaction_tbl <- redcued_interaction_wrkflw %>%
+  fit_resamples(resamples = whr_cvs) %>%
+  collect_metrics()
+
+bind_rows(
+  full_tbl %>% mutate(model = "Full Model"),
+  reduced_tbl %>% mutate(model = "Reduced Model"),
+  reduced_interaction_tbl %>% mutate(model = "Reduced Interaction Model")
+)
+```
+
+I decided that the reduced model was the best model. Although the reduced with
+interactions as a slightly higher $R^2$ value, it is by less than .01 with a 
+small reduction in RMSE. I did not select the full model even though it has a 
+much smaller RMSE and a larger $R^2$ value because it has strongly correlated 
+predictors.
 
 ## Part 3: Final Model
 
 10. Summarize the results from your final model. Don't forget to fit your final model on the **full** dataset, even if you used *test / training* data or *cross-validation* during the model selection process.
 
+```{r}
+#| label: Q10
+
+fit_model <- reduced_wrkflw %>%
+  fit(whr_clean) %>%
+  extract_fit_parsnip() 
+
+fit_model %>%
+  tidy() %>%
+  kable()
+
+fit_model %>%
+  glance() %>% 
+  kable()
+```
+
+GDP is the most important predictor outside of certain regional levels. This 
+model has an $R^2$ value of 0.81, meaning that it accounts for 81% of the
+variability in healthy life expectancy.
+
 11. Include a plot of the residuals and discussion of what you see, and interpretations of the coefficients and metrics.
+
+```{r}
+#| label: Q11
+
+whr_clean <- whr_clean %>%
+  mutate(
+    prediction = predict(reduced_wrkflw %>% fit(whr_clean), new_data = whr_clean)$.pred,
+    residuals = healthy_life_expectancy - prediction
+    )
+
+whr_clean %>%
+  ggplot(aes(x = healthy_life_expectancy, y = residuals)) +
+    geom_point() +
+    theme_bw()
+```
+
+The residual plot shows a bit of linear trend, which means a linear model is not
+the best fit for this data.
+
+- intercept:
+- log_gdp_per_capita: 
+- freedom_to_make_life_choices:
+- generosity: 
+- regional_indicator: 
 
 # Predicting Life Expectancy -- K-Nearest-Neighbors
 
