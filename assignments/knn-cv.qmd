@@ -3,7 +3,7 @@ title: "Assignment 2: Cross-Validation and K-Nearest-Neighbors"
 author: "Andrew Kerr"
 format: 
   html:
-    code-fold: true
+    code-fold: false
     code-line-numbers: true
     code-tools: true
     embed-resources: true
@@ -158,12 +158,12 @@ lr_wrkflw  %>%
 ```
 
 -   intercept: When all predictors are at there minimum values, the average happiness score is 5.46.
--   log_gdp_per_capita: If log GDP per capita moves from its lowest observed value to its highest, the average happiness score increases by 0.41 units.
--   healthy_life_expectancy: Moving from the lowest observed life expectancy to the highest, the average happiness score increases by 0.23 units.
--   social_support: Moving from the lowest observed social support to the highest, the average happiness score increases by 0.28 units.
--   freedom_to_make_life_choices: If freedom to make life choices moves from its lowest observed value to its highest, the average happiness score increases by 0.16 units.
--   generosity: If the generosity of society moves from its lowest observed value to its highest, the average happiness score increases by 0.11 units.
--   perceptions_of_corruption: If perceptions of corruption in government moves from its lowest observed value to its highest, the average happiness score decreases by 0.09 units.
+-   log_gdp_per_capita: If log GDP per capita moves from its lowest observed value to its highest, the average happiness score increases by 0.41 units, holding other predictors constant.
+-   healthy_life_expectancy: Moving from the lowest observed life expectancy to the highest, the average happiness score increases by 0.23 units, holding other predictors constant.
+-   social_support: Moving from the lowest observed social support to the highest, the average happiness score increases by 0.28 units, holding other predictors constant.
+-   freedom_to_make_life_choices: If freedom to make life choices moves from its lowest observed value to its highest, the average happiness score increases by 0.16 units, holding other predictors constant.
+-   generosity: If the generosity of society moves from its lowest observed value to its highest, the average happiness score increases by 0.11 units, holding other predictors constant.
+-   perceptions_of_corruption: If perceptions of corruption in government moves from its lowest observed value to its highest, the average happiness score decreases by 0.09 units, holding other predictors constant.
 
 4.  Which measures of life quality does the WHR consider to be most important to a country's happiness?
 
@@ -195,7 +195,7 @@ life_wrkflw <- workflow() %>%
 
 life_wrkflw %>%
   fit_resamples(resamples = whr_cvs) %>%
-  collect_metrics()
+  collect_metrics() %>% kable()
 ```
 
 ```{r}
@@ -225,7 +225,7 @@ life_wrkflw <- workflow() %>%
 
 life_wrkflw %>%
   fit_resamples(resamples = whr_cvs) %>%
-  collect_metrics()
+  collect_metrics() %>% kable()
 ```
 
 ```{r}
@@ -246,7 +246,7 @@ life_wrkflw <- workflow() %>%
 
 life_wrkflw %>%
   fit_resamples(resamples = whr_cvs) %>%
-  collect_metrics()
+  collect_metrics() %>% kable()
 
 life_wrkflw <- workflow() %>%
   add_recipe(gdp_2_recipe) %>%
@@ -254,7 +254,7 @@ life_wrkflw <- workflow() %>%
 
 life_wrkflw %>%
   fit_resamples(resamples = whr_cvs) %>%
-  collect_metrics()
+  collect_metrics() %>% kable()
 ```
 
 ```{r}
@@ -275,7 +275,7 @@ life_wrkflw <- workflow() %>%
 
 life_wrkflw %>%
   fit_resamples(resamples = whr_cvs) %>%
-  collect_metrics()
+  collect_metrics() %>% kable()
 
 life_wrkflw <- workflow() %>%
   add_recipe(social_2_recipe) %>%
@@ -283,7 +283,7 @@ life_wrkflw <- workflow() %>%
 
 life_wrkflw %>%
   fit_resamples(resamples = whr_cvs) %>%
-  collect_metrics()
+  collect_metrics() %>% kable()
 ```
 
 ```{r}
@@ -304,7 +304,7 @@ life_wrkflw <- workflow() %>%
 
 life_wrkflw %>%
   fit_resamples(resamples = whr_cvs) %>%
-  collect_metrics()
+  collect_metrics() %>% kable()
 
 life_wrkflw <- workflow() %>%
   add_recipe(gdp_2_recipe) %>%
@@ -312,7 +312,7 @@ life_wrkflw <- workflow() %>%
 
 life_wrkflw %>%
   fit_resamples(resamples = whr_cvs) %>%
-  collect_metrics()
+  collect_metrics() %>% kable()
 ```
 
 ```{r}
@@ -333,7 +333,7 @@ life_wrkflw <- workflow() %>%
 
 life_wrkflw %>%
   fit_resamples(resamples = whr_cvs) %>%
-  collect_metrics()
+  collect_metrics() %>% kable()
 
 life_wrkflw <- workflow() %>%
   add_recipe(gdp_2_recipe) %>%
@@ -341,7 +341,7 @@ life_wrkflw <- workflow() %>%
 
 life_wrkflw %>%
   fit_resamples(resamples = whr_cvs) %>%
-  collect_metrics()
+  collect_metrics()%>% kable()
 ```
 
 ```{r}
@@ -362,7 +362,7 @@ life_wrkflw <- workflow() %>%
 
 life_wrkflw %>%
   fit_resamples(resamples = whr_cvs) %>%
-  collect_metrics()
+  collect_metrics() %>% kable()
 
 life_wrkflw <- workflow() %>%
   add_recipe(gdp_2_recipe) %>%
@@ -370,7 +370,7 @@ life_wrkflw <- workflow() %>%
 
 life_wrkflw %>%
   fit_resamples(resamples = whr_cvs) %>%
-  collect_metrics()
+  collect_metrics() %>% kable()
 ```
 
 ```{r}
@@ -387,7 +387,7 @@ life_wrkflw <- workflow() %>%
 
 life_wrkflw %>%
   fit_resamples(resamples = whr_cvs) %>%
-  collect_metrics()
+  collect_metrics() %>% kable()
 ```
 
 ```{r}
@@ -409,7 +409,7 @@ life_wrkflw <- workflow() %>%
 
 life_wrkflw %>%
   fit_resamples(resamples = whr_cvs) %>%
-  collect_metrics()
+  collect_metrics() %>% kable()
 ```
 
 ```{r}
@@ -425,7 +425,7 @@ life_wrkflw <- workflow() %>%
 
 life_wrkflw %>%
   fit_resamples(resamples = whr_cvs) %>%
-  collect_metrics()
+  collect_metrics() %>% kable()
 ```
 
 ## Part 1: Summary of Approach
@@ -518,7 +518,7 @@ bind_rows(
   full_tbl %>% mutate(model = "Full Model"),
   reduced_tbl %>% mutate(model = "Reduced Model"),
   reduced_interaction_tbl %>% mutate(model = "Reduced Interaction Model")
-)
+) %>% kable()
 ```
 
 I decided that the reduced model was the best model. Although the reduced with
@@ -571,17 +571,99 @@ whr_clean %>%
 The residual plot shows a bit of linear trend, which means a linear model is not
 the best fit for this data.
 
-- intercept:
-- log_gdp_per_capita: 
-- freedom_to_make_life_choices:
-- generosity: 
-- regional_indicator: 
+- intercept: When all predictors are at there minimum values, the average life expectancy is 63 years.
+- log_gdp_per_capita: If log GDP per capita moves from its lowest observed value to its highest, the average life expectancy increases by 3.29 years, holding other predictors constant.
+- freedom_to_make_life_choices: If freedom to make life choices moves from its lowest observed value to its highest, the average life expectancy increases by 0.78 years, holding other predictors constant
+- generosity: If generosity moves from its lowest observed value to its highest, the average life expectancy decreases by 0.37 years, holding other predictors constant
+- regional_indicator: People living in [Central and Eastern Europe] have an average life expectancy [2.22] years [more] than people in South Asia. 
+  - replace region in brackets and coefficient in brackets to get interpretation for each region (change more to less if negative coefficient)
 
 # Predicting Life Expectancy -- K-Nearest-Neighbors
 
 ## Part 1: Tuning K
 
 12. For **each** of your top three candidate models from Q8, find the best choice of **K**. Show all your work, and provide a brief summary at the end (e.g., "For Model 1, we choose a K of \[something\] because \[reasons\]. For Model 2, ...")
+
+```{r}
+#| label: Q12
+
+# k_grid <- grid_regular(neighbors(c(1,50)), 
+#                        levels = 25)
+
+k_grid <- grid_regular(neighbors(c(6,11)),
+                       levels = 6)
+
+knn_mod_tune <- nearest_neighbor(neighbors = tune()) %>%
+  set_engine("kknn") %>%
+  set_mode("regression")
+
+full_wflow <- workflow() %>%
+  add_recipe(full_recipe) %>%
+  add_model(knn_mod_tune)
+
+reduced_wflow <- workflow() %>%
+  add_recipe(reduced_recipe) %>%
+  add_model(knn_mod_tune)
+
+reduced_2_wflow <- workflow() %>%
+  add_recipe(reduced_2_recipe) %>%
+  add_model(knn_mod_tune)
+
+whr_cv <- vfold_cv(whr_clean, v = 10)
+
+################################################################################
+
+knn_grid_search_full <-
+  tune_grid(
+    full_wflow,
+    resamples = whr_cv,
+    grid = k_grid
+  )
+
+knn_grid_search_reduced <-
+  tune_grid(
+    reduced_wflow,
+    resamples = whr_cv,
+    grid = k_grid
+  )
+
+knn_grid_search_reduced_2 <-
+  tune_grid(
+    reduced_2_wflow,
+    resamples = whr_cv,
+    grid = k_grid
+  )
+
+################################################################################
+
+full_tbl <- knn_grid_search_full %>% 
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  slice_min(mean, n = 3)
+
+reduced_tbl <- knn_grid_search_reduced %>% 
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  slice_min(mean, n = 3)
+
+reduced_interaction_tbl <- knn_grid_search_reduced_2 %>% 
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  slice_min(mean, n = 3)
+
+bind_rows(
+  full_tbl %>% mutate(model = "Full Model"),
+  reduced_tbl %>% mutate(model = "Reduced Model"),
+  reduced_interaction_tbl %>% mutate(model = "Reduced Interaction Model")
+) %>% kable()
+```
+
+I first ran all three models on a grid search between k = 1 and k = 50 with 25 
+levels. Looking at the values of k with the lowest RMSE, all models had k = 7
+and k = 9 in the top 2, so I ran all three models on a grid search between k = 6
+and k = 11 with 6 levels. Now, the best value of k for the full model is 8, the 
+reduced model is 8, and the reduced model with interaction is 6 (although the 
+top 3 k's based on minimum RMSE are very close).
 
 ## Part 2: Best Model
 
@@ -593,13 +675,131 @@ You should include:
 
 -   A plot of the residuals
 
+```{r}
+#| label: Q13
+
+k_grid <- grid_regular(neighbors(c(1,15)),
+                       levels = 15)
+
+whr_cv <- vfold_cv(whr_clean, v = 10)
+
+knn_mod_tune <- nearest_neighbor(neighbors = tune()) %>%
+  set_engine("kknn") %>%
+  set_mode("regression")
+
+full_wflow <- workflow() %>%
+  add_recipe(full_recipe) %>%
+  add_model(knn_mod_tune)
+
+knn_grid_search_full <-
+  tune_grid(
+    full_wflow,
+    resamples = whr_cv,
+    grid = k_grid
+  )
+
+min_k_rmse <- knn_grid_search_full %>% 
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  slice_min(mean, n = 1) %>%
+  pull(neighbors)
+
+min_k_rsq <- knn_grid_search_full %>% 
+  collect_metrics() %>%
+  filter(.metric == "rsq") %>%
+  slice_max(mean, n = 1) %>%
+  pull(neighbors)
+
+knn_grid_search_full %>% 
+  collect_metrics() %>%
+  ggplot(aes(x = neighbors, y = mean, color = .metric)) +
+    geom_line() +
+    geom_vline(xintercept = min_k_rmse, color = 'firebrick') +
+    geom_vline(xintercept = min_k_rsq, color = 'cornflowerblue', linetype = 'dashed') +
+    theme_bw()
+
+################################################################################
+
+knn_model <- nearest_neighbor(neighbors = 8) %>%
+  set_mode("regression") %>% 
+  set_engine("kknn")
+
+full_wflow <- workflow() %>%
+  add_recipe(full_recipe) %>%
+  add_model(knn_model)
+
+knn_fit <- full_wflow %>% fit(whr_clean) 
+knn_pred <- knn_fit %>% predict(whr_clean)
+knn_resid <- whr_clean$healthy_life_expectancy - knn_pred$.pred
+
+ggplot() +
+  geom_point(aes(x = whr_clean$healthy_life_expectancy, y = knn_resid)) +
+  geom_hline(yintercept = 0, linetype = 'dashed', color = 'firebrick') +
+  labs(
+    x = 'Fitted Values',
+    y = 'Residuals',
+    title = 'Fitted v. Residuals'
+  ) +
+  theme_bw()
+```
+
+The best model based on smallest RMSE is the full model with k = 8. As seen in
+the first plot, the red line for RMSE decreases until kk = 7, then begins 
+increasing at k = 9. Meanwhile the blue line for $R^2$ increases then stays 
+constant after k = 5. Zooming in, we can see that the minimum value for RMSE and 
+the maximum value for $R^2$ is at k = 8, as denoted by the overlapping solid and 
+dashed lines. The residuals plot looks better than the plot from the linear 
+model, showing less of a linear pattern and more random.
+
 # Predicting on New Data
 
 14. Use your **one** best *least-squares regression* model (Q9) to predict the life expectancy of all countries.
 
+```{r}
+#| label: Q14
+#| message: false
+
+whr_new <- read_csv(here::here('data', 'whr_2020.csv'))
+
+reduced_wrkflw <- workflow() %>%
+  add_recipe(reduced_recipe) %>%
+  add_model(lin_reg)
+
+lm_predicted <- reduced_wrkflw %>%
+  fit(whr_clean) %>%
+  predict(new_data = whr_new)
+```
+
 15. Use your **one** best *KNN* model (Q13) to predict the life expectancy of all countries.
 
+```{r}
+#| label: Q15
+
+full_wrkflw <- workflow() %>%
+  add_recipe(full_recipe) %>%
+  add_model(knn_model)
+
+knn_predicted <- full_wrkflw %>%
+  fit(whr_clean) %>%
+  predict(new_data = whr_new)
+```
+
 16. Which model did a better job predicting the true values in the new data?
+
+```{r}
+whr_new %>%
+  mutate(
+    residuals_lm = healthy_life_expectancy - lm_predicted$.pred,
+    residuals_knn = healthy_life_expectancy - knn_predicted$.pred
+  ) %>%
+  summarise(
+    lm_mse = mean(residuals_lm^2),
+    knn_mse = mean(residuals_knn^2)
+  )
+```
+
+The KNN model did a better job predicting the true values in the new data as
+evident in its smaller MSE value.
 
 # Discussion Questions
 
@@ -607,18 +807,46 @@ You should include:
 
 17. Make an argument for why a **parametric** method, like least-squares regression, might be preferred in this task.
 
+A parametric method might be preferred in this task if your goal is 
+interpretability. This method returns coefficients, which, for example,  can tell you what 
+predictors are most influential in predicting the response. Additionally, if the relationship
+between predictors and response is linear, then this model would perform better.
+
 18. Then make an argument for why a **non-parametric** method, like K-Nearest-Neighbors, might be preferred.
+
+A non-parametric method might be preferred if your goal is prediction. This method
+does not help with interpreting since it only returns predictions, but can work with
+a wider variety of relationships between predictors and response. 
 
 ## Interpretation and Prediction
 
 19. If your only goal were **interpretation**, which of the candidate models (from *any* section of the assignment) would you have chosen? Why?
 
+I would have chosen my reduced model from my linear models. To start, linear models
+are better than KNN models for interpretation because they provide coefficients to interpret. I would select
+my reduced model over those with interactions because interactions are difficult to interpret, and in this situation did
+not improve the model enough to be worthwhile in keeping (only +0.01 in $R^2$).
+
 20. If your only goal were **prediction** on future data, which of the candidate models would you have chosen? Why?
+
+If my only goal was prediction then I would have chosen my best KNN model (full model). This is because the residuals tell
+us the shape of the data is not linear, so I do not want a linear model but a non-parametric model like KNN. I would select the 
+full model because it resulted in the lowest RMSE value.
 
 ## Standardization
 
 21. Consider your final best least-squares regression model from Q9. Suppose we fit this model again, but this time, we normalize **all** of the quantitative variables. Will anything change? Give a (conceptual) argument for why this is true.
 
+Well seeing how I DID normalize already, I will pretend I did not here :). Normalizing all
+of the quantitative variables would put them on the same scale, allowing us to compare them to each other. This would change the size of
+the coefficients, but would not change the predicted values or relationships between the response and predictors. This makes sense because 
+normalizing the variables is a linear transformation, and any changes to the predictors this way are taken care of as changes to the coefficents, leaving the predictions the same.
+
 ## Quantitative or Categorical?
 
 22. Suppose we add the predictor `year` to our final model as a **categorical variable** and fit the model on all the data. Then, we use this new model to predict on the 2020 data. What is wrong with this plan?
+
+The problem is that we are now predicting on data our model has not seen, Treating year as
+a categorical variable makes each year a level, and 2020 is not a level our model has been trained on. Thus, it has
+not coefficient for this level and can not predict on it.
+
