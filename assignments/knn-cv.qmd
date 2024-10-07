@@ -105,14 +105,9 @@ whr_clean <- whr_clean %>%
 
 glance(lr_m1) %>% kable()
 tidy(lr_m1) %>% kable()
-
-whr_clean %>%
-  ggplot(aes(x = prediction, y = residuals)) +
-    geom_point() +
-    theme_bw()
 ```
 
-The happiness in the world is not changing linearly over time since we see a low $R^2$ value of approx. 0, and a large p-value for the year coefficient. Additionally, the residual plot shows a linear pattern, meaning we are using the wrong model.
+The happiness in the world is not changing linearly over time since we see a low $R^2$ value of approx. 0, and a large p-value for the year coefficient.
 
 2.  Was the happiness score approximately the same in all the years? Convert `year` to a factor variable, and fit a simple linear model to address this question.
 
@@ -565,11 +560,11 @@ whr_clean <- whr_clean %>%
 whr_clean %>%
   ggplot(aes(x = prediction, y = residuals)) +
     geom_point() +
+  labs(x = 'fitted') +
     theme_bw()
 ```
 
-The residual plot shows a bit of linear trend, which means a linear model is not
-the best fit for this data.
+The residual plot looks fairly random, which is good!
 
 - intercept: When all predictors are at there minimum values, the average life expectancy is 63 years.
 - log_gdp_per_capita: If log GDP per capita moves from its lowest observed value to its highest, the average life expectancy increases by 3.29 years, holding other predictors constant.
@@ -733,7 +728,7 @@ knn_pred <- knn_fit %>% predict(whr_clean)
 knn_resid <- whr_clean$healthy_life_expectancy - knn_pred$.pred
 
 ggplot() +
-  geom_point(aes(x = whr_clean$healthy_life_expectancy, y = knn_resid)) +
+  geom_point(aes(x = knn_pred$.pred, y = knn_resid)) +
   geom_hline(yintercept = 0, linetype = 'dashed', color = 'firebrick') +
   labs(
     x = 'Fitted Values',
@@ -748,8 +743,8 @@ the first plot, the red line for RMSE decreases until kk = 7, then begins
 increasing at k = 9. Meanwhile the blue line for $R^2$ increases then stays 
 constant after k = 5. Zooming in, we can see that the minimum value for RMSE and 
 the maximum value for $R^2$ is at k = 8, as denoted by the overlapping solid and 
-dashed lines. The residuals plot looks better than the plot from the linear 
-model, showing less of a linear pattern and more random.
+dashed lines. The residuals plot shows a slight fanning shape, with higher
+variance at lower values and smaller variance at higher values.
 
 # Predicting on New Data
 
