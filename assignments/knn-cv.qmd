@@ -107,7 +107,7 @@ glance(lr_m1) %>% kable()
 tidy(lr_m1) %>% kable()
 
 whr_clean %>%
-  ggplot(aes(x = happiness_score, y = residuals)) +
+  ggplot(aes(x = prediction, y = residuals)) +
     geom_point() +
     theme_bw()
 ```
@@ -563,7 +563,7 @@ whr_clean <- whr_clean %>%
     )
 
 whr_clean %>%
-  ggplot(aes(x = healthy_life_expectancy, y = residuals)) +
+  ggplot(aes(x = prediction, y = residuals)) +
     geom_point() +
     theme_bw()
 ```
