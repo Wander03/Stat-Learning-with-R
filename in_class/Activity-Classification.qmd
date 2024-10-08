@@ -1,0 +1,273 @@
+---
+title: "Classification: KNN and Logistic Regression"
+author: "YOUR NAME HERE"
+format: 
+  html:
+    code-fold: true
+    code-line-numbers: true
+    code-tools: true
+    self-contained: true
+editor: visual
+execute:
+  message: false
+---
+
+## Setup
+
+Declare your libraries:
+
+```{r}
+#| label: libraries-r
+#| include: false
+library(tidyverse)
+library(tidymodels)
+library(glmnet)
+```
+
+## KNN
+
+#### Code from Lecture
+
+```{r}
+ins <- read_csv("https://www.dropbox.com/s/bocjjyo1ehr5auz/insurance.csv?dl=1")
+head(ins)
+```
+
+```{r}
+ins <- ins %>%
+  mutate(
+    smoker = factor(smoker)
+  ) %>%
+  drop_na(smoker)
+```
+
+```{r}
+knn_mod <- nearest_neighbor(neighbors = 5) %>%
+  set_engine("kknn") %>%
+  set_mode("classification")
+```
+
+```{r}
+recipe_1 <- recipe(smoker ~ charges, data = ins)
+
+workflow_1 <- workflow() %>%
+  add_model(knn_mod) %>%
+  add_recipe(recipe_1)
+```
+
+```{r}
+knn_fit_1 <- workflow_1 %>%
+  fit(ins)
+
+extract_fit_parsnip(knn_fit_1)
+```
+
+```{r}
+ins %>%
+  mutate(
+    preds = predict(knn_fit_1, ins)$.pred_class
+  ) %>%
+  conf_mat(truth = smoker,
+           estimate = preds)
+```
+
+#### Your tasks
+
+Select the best KNN model for predicting smoker status What metrics does the cross-validation process automatically output?
+
+```{r}
+k_grid <- grid_regular(neighbors(c(1,100)),
+                       levels = 50)
+
+ins_cvs <- vfold_cv(ins, v = 10)
+
+knn_mod_tune <- nearest_neighbor(neighbors = tune()) %>%
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+################################################################################
+
+recipe_1 <- recipe(smoker ~ ., data = ins) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_nominal_predictors())
+
+recipe_2 <- recipe(smoker ~ charges + bmi + age, data = ins) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_nominal_predictors())
+
+recipe_3 <- recipe(smoker ~ charges + bmi + age + sex, data = ins) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_nominal_predictors())
+
+################################################################################
+
+workflow_1 <- workflow() %>%
+  add_model(knn_mod_tune) %>%
+  add_recipe(recipe_1)
+
+workflow_2 <- workflow() %>%
+  add_model(knn_mod_tune) %>%
+  add_recipe(recipe_2)
+
+workflow_3 <- workflow() %>%
+  add_model(knn_mod_tune) %>%
+  add_recipe(recipe_3)
+
+################################################################################
+
+knn_grid_search_1 <-
+  tune_grid(
+    workflow_1,
+    resamples = ins_cvs,
+    grid = k_grid
+  )
+
+knn_grid_search_2 <-
+  tune_grid(
+    workflow_2,
+    resamples = ins_cvs,
+    grid = k_grid
+  )
+
+knn_grid_search_3 <-
+  tune_grid(
+    workflow_3,
+    resamples = ins_cvs,
+    grid = k_grid
+  )
+
+################################################################################
+
+knn_grid_search_1 %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  slice_min(mean)
+
+knn_grid_search_2 %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  slice_min(mean)
+
+knn_grid_search_3 %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  slice_min(mean)
+```
+
+outputs: accuracy, brier_class, roc_auc
+
+## Logistic Regression
+
+#### Code from lecture:
+
+```{r}
+logit_mod <- logistic_reg() %>%
+  set_mode("classification") %>%
+  set_engine("glm")
+```
+
+```{r}
+rec_2 <- recipe(smoker ~ charges, data = ins) %>%
+  step_normalize(all_numeric_predictors())
+
+ins_wflow_logit <- workflow() %>%
+  add_recipe(rec_2) %>%
+  add_model(logit_mod)
+
+ins_fit <- ins_wflow_logit %>%
+  fit(ins)
+
+ins_fit %>% pull_workflow_fit() %>% tidy()
+```
+
+```{r}
+preds <- ins_fit %>% predict(ins)
+preds
+```
+
+```{r}
+ins_fit %>% predict(ins, type = "raw")
+```
+
+```{r}
+ins_fit %>% predict(ins, type = "prob")
+```
+
+```{r}
+pred_probs = ins_fit %>% predict(ins, type = "prob")
+
+ins %>%
+  mutate(
+    pred_probs = pred_probs$.pred_yes
+  ) %>%
+  ggplot(mapping = aes(y = pred_probs, x = charges, color = smoker)) +
+  geom_point(alpha = 0.75) +
+  scale_x_continuous(labels = label_dollar()) +
+  labs(x = "Charges", 
+       y = "",
+       title = "Predicted Probability of Being a Smoker based on Insurance Charges", 
+       color = "Smoking Status")
+```
+
+```{r}
+ins <- ins %>%
+  mutate(
+    predicted_smoker = predict(ins_fit, ins)$.pred_class
+  ) 
+
+ins %>%
+  conf_mat(truth = smoker,
+                   estimate = predicted_smoker)
+```
+
+What percentage did we get correct?
+
+```{r}
+ins %>%
+  accuracy(truth = smoker,
+           estimate = predicted_smoker)
+```
+
+#### Your tasks
+
+Select the best logistic regression model for predicting smoker status Report the cross-validated metrics - how do they compare to KNN?
+
+```{r}
+fit_1 <- ins_wflow_logit <- workflow() %>%
+  add_recipe(recipe_1) %>%
+  add_model(logit_mod) %>%
+  fit(ins)
+
+
+fit_2 <- ins_wflow_logit <- workflow() %>%
+  add_recipe(recipe_2) %>%
+  add_model(logit_mod) %>%
+  fit(ins)
+
+fit_3 <- ins_wflow_logit <- workflow() %>%
+  add_recipe(recipe_3) %>%
+  add_model(logit_mod) %>%
+  fit(ins)
+
+ins <- ins %>%
+  mutate(
+    predicted_smoker_1 = predict(fit_1, ins)$.pred_class,
+    predicted_smoker_2 = predict(fit_2, ins)$.pred_class,
+    predicted_smoker_3 = predict(fit_3, ins)$.pred_class
+  ) 
+
+ins %>%
+  accuracy(truth = smoker,
+           estimate = predicted_smoker_1)
+
+ins %>%
+  accuracy(truth = smoker,
+           estimate = predicted_smoker_2)
+
+ins %>%
+  accuracy(truth = smoker,
+           estimate = predicted_smoker_3)
+```
+
+recipe 3 did the best!
+All three models did better then their KNN counterparts!
