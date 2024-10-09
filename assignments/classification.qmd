@@ -54,19 +54,21 @@ ha_clean %>%
   count()
 
 # numeric predictors
-hist(ha_clean$age, main = "Age Distribution", xlab = "Age", col = "cornflowerblue", breaks = 20)
-hist(ha_clean$trtbps, main = "Resting BP Distribution", xlab = "Resting BP", col = "cornflowerblue", breaks = 20)
-hist(ha_clean$chol, main = "Cholesterol Distribution", xlab = "Cholesterol", col = "cornflowerblue", breaks = 20)
-hist(ha_clean$thalach, main = "Max Heart Rate Distribution", xlab = "Max Heart Rate", col = "cornflowerblue", breaks = 20)
-
-# categoriucal predictors
-ggplot(ha_clean, aes(x = factor(sex))) + geom_bar(fill = "cornflowerblue") + xlab("Sex") + ylab("Count")
-ggplot(ha_clean, aes(x = factor(cp))) + geom_bar(fill = "cornflowerblue") + xlab("Chest Pain Type") + ylab("Count")
-ggplot(ha_clean, aes(x = factor(restecg))) + geom_bar(fill = "cornflowerblue") + xlab("Resting ECG") + ylab("Count")
+# hist(ha_clean$age, main = "Age Distribution", xlab = "Age", col = "cornflowerblue", breaks = 20)
+# hist(ha_clean$trtbps, main = "Resting BP Distribution", xlab = "Resting BP", col = "cornflowerblue", breaks = 20)
+# hist(ha_clean$chol, main = "Cholesterol Distribution", xlab = "Cholesterol", col = "cornflowerblue", breaks = 20)
+# hist(ha_clean$thalach, main = "Max Heart Rate Distribution", xlab = "Max Heart Rate", col = "cornflowerblue", breaks = 20)
+# 
+# # categoriucal predictors
+# ggplot(ha_clean, aes(x = factor(sex))) + geom_bar(fill = "cornflowerblue") + xlab("Sex") + ylab("Count")
+# ggplot(ha_clean, aes(x = factor(cp))) + geom_bar(fill = "cornflowerblue") + xlab("Chest Pain Type") + ylab("Count")
+# ggplot(ha_clean, aes(x = factor(restecg))) + geom_bar(fill = "cornflowerblue") + xlab("Resting ECG") + ylab("Count")
 
 ggpairs(ha_clean, columns = c("age", "trtbps", "chol", "thalach", "output"),
-        aes(color = factor(output)))
+        aes(color = output))
 
+ggpairs(ha_clean, columns = c("sex", "cp", "restecg", "output"),
+        aes(color = output))
 ```
 
 # Part One: Fitting Models
@@ -87,23 +89,88 @@ k_grid <- grid_regular(neighbors(c(1,50)),
 #### Logistic Regression
 
 ```{r}
+#| label: model-fit-function
+
+fit_model <- function(data, data_cv, mod, rec, rec_name) {
+  
+  rec_wflow <- workflow() %>%
+    add_recipe(rec) %>%
+    add_model(mod)
+  
+  rec_fit <- rec_wflow %>% fit(data)
+  rec_fit_cv <- rec_wflow %>% fit_resamples(data_cv)
+  
+  cat(rec_name, 
+      'ROC AUC:', 
+      collect_metrics(rec_fit_cv) %>% filter(.metric == 'roc_auc') %>% pull(mean), 
+      '\n'
+      )
+
+  data %>%
+    mutate(predicted_response = predict(rec_fit, .)$.pred_class) %>%
+    conf_mat(truth = output, estimate = predicted_response)
+  
+}
+```
+
+
+```{r}
 #| label: LR-model-fitting
+
+ha_cv <- vfold_cv(ha_clean, v = 10)
 
 logit_mod <- logistic_reg() %>%
   set_mode("classification") %>%
   set_engine("glm")
 
-rec_1 <- recipe(output ~ ., data = ha_clean) %>%
+rec_base <- recipe(output ~ ., data = ha_clean) %>%
   step_dummy(all_nominal_predictors()) %>%
   step_normalize(all_numeric_predictors())
 
-rec_1_wflow <- workflow() %>%
-  add_recipe(rec_1) %>%
-  add_model(logit_mod)
+rec_age <- recipe(output ~ age, data = ha_clean) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
 
-rec_1_fit <- rec_1_wflow %>% fit(ha_clean)
+rec_thalach <- recipe(output ~ thalach, data = ha_clean) %>%
+  step_normalize(all_numeric_predictors())
 
-extract_fit_parsnip(rec_1_fit)
+rec_trtbps <- recipe(output ~ trtbps, data = ha_clean) %>%
+  step_normalize(all_numeric_predictors())
+
+rec_chol <- recipe(output ~ chol, data = ha_clean) %>%
+  step_normalize(all_numeric_predictors())
+
+rec_sex <- recipe(output ~ sex, data = ha_clean) %>%
+  step_dummy(all_nominal_predictors())
+
+rec_restecg <- recipe(output ~ restecg, data = ha_clean) %>%
+  step_dummy(all_nominal_predictors())
+
+rec_cp <- recipe(output ~ cp, data = ha_clean) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+
+rec_5 <- recipe(output ~ cp + thalach + age, data = ha_clean) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+
+rec_6 <- recipe(output ~ cp + thalach + age, data = ha_clean) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_interact(terms = ~ age:thalach)
+
+base_recipes <- list(
+  rec_base = rec_base,
+  rec_age = rec_age,
+  rec_thalach = rec_thalach,
+  rec_trtbps = rec_trtbps,
+  rec_chol = rec_chol,
+  rec_sex = rec_sex,
+  rec_restecg = rec_restecg,
+  rec_cp = rec_cp
+)
+
+map2(base_recipes, names(base_recipes), ~fit_model(ha_clean, ha_cv, logit_mod, .x, .y))
 ```
 
 #### LDA
