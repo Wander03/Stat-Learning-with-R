@@ -19,6 +19,7 @@ library(tidymodels)
 library(glmnet)
 library(discrim)
 library(GGally)
+library(car)
 ```
 
 # Part Zero
@@ -53,40 +54,18 @@ ha_clean %>%
   group_by(output) %>%
   count()
 
-# numeric predictors
-# hist(ha_clean$age, main = "Age Distribution", xlab = "Age", col = "cornflowerblue", breaks = 20)
-# hist(ha_clean$trtbps, main = "Resting BP Distribution", xlab = "Resting BP", col = "cornflowerblue", breaks = 20)
-# hist(ha_clean$chol, main = "Cholesterol Distribution", xlab = "Cholesterol", col = "cornflowerblue", breaks = 20)
-# hist(ha_clean$thalach, main = "Max Heart Rate Distribution", xlab = "Max Heart Rate", col = "cornflowerblue", breaks = 20)
-# 
-# # categoriucal predictors
-# ggplot(ha_clean, aes(x = factor(sex))) + geom_bar(fill = "cornflowerblue") + xlab("Sex") + ylab("Count")
-# ggplot(ha_clean, aes(x = factor(cp))) + geom_bar(fill = "cornflowerblue") + xlab("Chest Pain Type") + ylab("Count")
-# ggplot(ha_clean, aes(x = factor(restecg))) + geom_bar(fill = "cornflowerblue") + xlab("Resting ECG") + ylab("Count")
-
 ggpairs(ha_clean, columns = c("age", "trtbps", "chol", "thalach", "output"),
         aes(color = output))
 
 ggpairs(ha_clean, columns = c("sex", "cp", "restecg", "output"),
         aes(color = output))
+
+ggpairs(ha_clean,
+        aes(color = output))
 ```
 
 # Part One: Fitting Models
-
-#### KNN
-
-```{r}
-#| label: KNN-model-fitting
-
-knn_mod <- nearest_neighbor(neighbors = 5) %>%
-  set_engine("kknn") %>%
-  set_mode("classification")
-
-k_grid <- grid_regular(neighbors(c(1,50)), 
-                       levels = 25)
-```
-
-#### Logistic Regression
+#### Set Up
 
 ```{r}
 #| label: model-fit-function
@@ -100,30 +79,65 @@ fit_model <- function(data, data_cv, mod, rec, rec_name) {
   rec_fit <- rec_wflow %>% fit(data)
   rec_fit_cv <- rec_wflow %>% fit_resamples(data_cv)
   
-  cat(rec_name, 
-      'ROC AUC:', 
-      collect_metrics(rec_fit_cv) %>% filter(.metric == 'roc_auc') %>% pull(mean), 
-      '\n'
-      )
+  # if(rec_name == 'rec_main' & mod$engine == 'glm') cat('VIF:', vif(extract_fit_engine(rec_fit)), '\n')
+  
+  roc_auc <- collect_metrics(rec_fit_cv) %>% filter(.metric == 'roc_auc') %>% pull(mean)
 
-  data %>%
+  conf_matrix <- data %>%
     mutate(predicted_response = predict(rec_fit, .)$.pred_class) %>%
-    conf_mat(truth = output, estimate = predicted_response)
+    conf_mat(truth = output, estimate = predicted_response) %>%
+    tidy() %>%
+    pivot_wider(names_from = name, values_from = value)
+  
+  tp <- conf_matrix$cell_1_1[1]
+  fp <- conf_matrix$cell_1_2[1]
+  fn <- conf_matrix$cell_2_1[1]
+  tn <- conf_matrix$cell_2_2[1]
+
+  data.frame(
+    Recipe = rec_name,
+    ROC_AUC = roc_auc,
+    TN = tn,
+    FP = fp,
+    FN = fn,
+    TP = tp
+  )
   
 }
 ```
 
+```{r}
+#| label: knn-k-function
+
+find_k <- function(k_grid, data_cv, mod, rec, rec_name) {
+  
+  rec_wflow <- workflow() %>%
+    add_recipe(rec) %>%
+    add_model(mod)
+  
+  knn_grid_search <-
+    tune_grid(
+      rec_wflow,
+      resamples = data_cv,
+      grid = k_grid
+    )
+
+  metrics <- collect_metrics(knn_grid_search) %>% 
+    filter(.metric == 'roc_auc')
+
+  data.frame(
+    Recipe = rec_name,
+    ROC_AUC = metrics$mean,
+    k = metrics$neighbors
+  )
+  
+}
+```
 
 ```{r}
-#| label: LR-model-fitting
+#| label: starting-recipes
 
-ha_cv <- vfold_cv(ha_clean, v = 10)
-
-logit_mod <- logistic_reg() %>%
-  set_mode("classification") %>%
-  set_engine("glm")
-
-rec_base <- recipe(output ~ ., data = ha_clean) %>%
+rec_main <- recipe(output ~ ., data = ha_clean) %>%
   step_dummy(all_nominal_predictors()) %>%
   step_normalize(all_numeric_predictors())
 
@@ -150,17 +164,8 @@ rec_cp <- recipe(output ~ cp, data = ha_clean) %>%
   step_dummy(all_nominal_predictors()) %>%
   step_normalize(all_numeric_predictors())
 
-rec_5 <- recipe(output ~ cp + thalach + age, data = ha_clean) %>%
-  step_dummy(all_nominal_predictors()) %>%
-  step_normalize(all_numeric_predictors())
-
-rec_6 <- recipe(output ~ cp + thalach + age, data = ha_clean) %>%
-  step_dummy(all_nominal_predictors()) %>%
-  step_normalize(all_numeric_predictors()) %>%
-  step_interact(terms = ~ age:thalach)
-
 base_recipes <- list(
-  rec_base = rec_base,
+  rec_main = rec_main,
   rec_age = rec_age,
   rec_thalach = rec_thalach,
   rec_trtbps = rec_trtbps,
@@ -169,8 +174,96 @@ base_recipes <- list(
   rec_restecg = rec_restecg,
   rec_cp = rec_cp
 )
+```
 
-map2(base_recipes, names(base_recipes), ~fit_model(ha_clean, ha_cv, logit_mod, .x, .y))
+```{r}
+#| label: added-recipes
+
+rec_1 <- recipe(output ~ cp + thalach, data = ha_clean) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+
+rec_2 <- rec_1 %>%
+  step_interact(terms = ~ thalach:starts_with("cp_"))
+
+rec_3 <- recipe(output ~ cp + thalach + age, data = ha_clean) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+
+rec_4 <- rec_3 %>%
+  step_interact(terms = ~ age:thalach)
+
+rec_5 <- rec_3 %>%
+  step_interact(terms = ~ age:starts_with("cp_"))
+
+test_recipes <- append(
+  base_recipes,
+  list(
+    rec_1 = rec_1,
+    rec_2 = rec_2,
+    rec_3 = rec_3,
+    rec_4 = rec_4,
+    rec_5 = rec_5
+  )
+)
+```
+
+#### KNN
+
+```{r}
+#| label: KNN-model-fitting
+
+ha_cv <- vfold_cv(ha_clean, v = 10)
+
+k_grid <- grid_regular(neighbors(c(1,100)), 
+                       levels = 50)
+
+knn_mod_tune <- nearest_neighbor(neighbors = tune()) %>%
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+results_knn_k <- list_rbind(map2(test_recipes, names(test_recipes), ~find_k(k_grid, ha_cv, knn_mod_tune, .x, .y)))
+
+best_k <- results_knn_k %>%
+  group_by(Recipe) %>%
+  slice(which.max(ROC_AUC)) %>%
+  ungroup()
+
+# results_knn_k %>%
+#   filter(Recipe == 'rec_main') %>%
+#   slice_max(ROC_AUC, n = 10)
+
+# results_knn_k %>%
+#   filter(Recipe == 'rec_2') %>%
+#   slice_max(ROC_AUC, n = 3)
+
+results_knn <- list_rbind(map2(test_recipes, names(test_recipes), ~{
+  
+  cur_k <- best_k %>% filter(Recipe == .y) %>% pull(k)
+  
+  knn_mod <- nearest_neighbor(neighbors = cur_k) %>%
+  set_engine("kknn") %>%
+  set_mode("classification")
+  
+  fit_model(ha_clean, ha_cv, knn_mod, .x, .y) %>% mutate(k = cur_k)
+  
+  }))
+
+results_knn %>% slice_max(ROC_AUC, n = 5)
+```
+
+#### Logistic Regression
+
+```{r}
+#| label: LR-model-fitting
+
+logit_mod <- logistic_reg() %>%
+  set_mode("classification") %>%
+  set_engine("glm")
+
+results_logreg <- list_rbind(map2(test_recipes, names(test_recipes), ~fit_model(ha_clean, ha_cv, logit_mod, .x, .y)))
+
+results_logreg %>% slice_max(ROC_AUC, n = 5)
 ```
 
 #### LDA
@@ -181,6 +274,10 @@ map2(base_recipes, names(base_recipes), ~fit_model(ha_clean, ha_cv, logit_mod, .
 lda_mod <- discrim_linear() %>%
   set_engine("MASS") %>%
   set_mode("classification")
+
+results_lda <- list_rbind(map2(test_recipes, names(test_recipes), ~fit_model(ha_clean, ha_cv, lda_mod, .x, .y)))
+
+results_lda %>% slice_max(ROC_AUC, n = 5)
 ```
 
 #### QDA
@@ -191,6 +288,10 @@ lda_mod <- discrim_linear() %>%
 qda_mod <- discrim_regularized(frac_common_cov = 0) %>% 
   set_engine('klaR') %>% 
   set_mode('classification')
+
+results_qda <- list_rbind(map2(test_recipes, names(test_recipes), ~fit_model(ha_clean, ha_cv, qda_mod, .x, .y)))
+
+results_qda %>% slice_max(ROC_AUC, n = 5)
 ```
 
 # Part Two: Interpreting Models
