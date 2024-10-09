@@ -1,0 +1,194 @@
+---
+title: "Classification: LDA and QDA"
+author: "Andrew Kerr"
+format: 
+  html:
+    code-fold: true
+    code-line-numbers: true
+    code-tools: true
+    self-contained: true
+editor: source
+embed-resources: true
+---
+
+```{r}
+#| label: libraries-r
+#| include: false
+library(tidyverse)
+library(tidymodels)
+library(glmnet)
+library(discrim)
+library(GGally)
+```
+
+# Part Zero
+
+```{r}
+#| label: data-read
+#| message: false
+
+ha <- read_csv(here::here('data', 'heart_attack.csv'))
+```
+
+```{r}
+#| label: data-cleaning
+
+ha_clean <- ha %>%
+  mutate(
+    across(.cols = c(sex, cp, restecg), 
+           .fns = ~as.factor(.x)
+           ), 
+    output = factor(output, levels = c(1, 0)
+                    ) # make "at-risk" the primary target
+  ) %>%
+  drop_na(output)
+```
+
+```{r}
+#| label: EDA
+#| message: false
+
+# check for class imbalance
+ha_clean %>%
+  group_by(output) %>%
+  count()
+
+# numeric predictors
+hist(ha_clean$age, main = "Age Distribution", xlab = "Age", col = "cornflowerblue", breaks = 20)
+hist(ha_clean$trtbps, main = "Resting BP Distribution", xlab = "Resting BP", col = "cornflowerblue", breaks = 20)
+hist(ha_clean$chol, main = "Cholesterol Distribution", xlab = "Cholesterol", col = "cornflowerblue", breaks = 20)
+hist(ha_clean$thalach, main = "Max Heart Rate Distribution", xlab = "Max Heart Rate", col = "cornflowerblue", breaks = 20)
+
+# categoriucal predictors
+ggplot(ha_clean, aes(x = factor(sex))) + geom_bar(fill = "cornflowerblue") + xlab("Sex") + ylab("Count")
+ggplot(ha_clean, aes(x = factor(cp))) + geom_bar(fill = "cornflowerblue") + xlab("Chest Pain Type") + ylab("Count")
+ggplot(ha_clean, aes(x = factor(restecg))) + geom_bar(fill = "cornflowerblue") + xlab("Resting ECG") + ylab("Count")
+
+ggpairs(ha_clean, columns = c("age", "trtbps", "chol", "thalach", "output"),
+        aes(color = factor(output)))
+
+```
+
+# Part One: Fitting Models
+
+#### KNN
+
+```{r}
+#| label: KNN-model-fitting
+
+knn_mod <- nearest_neighbor(neighbors = 5) %>%
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+k_grid <- grid_regular(neighbors(c(1,50)), 
+                       levels = 25)
+```
+
+#### Logistic Regression
+
+```{r}
+#| label: LR-model-fitting
+
+logit_mod <- logistic_reg() %>%
+  set_mode("classification") %>%
+  set_engine("glm")
+
+rec_1 <- recipe(output ~ ., data = ha_clean) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+
+rec_1_wflow <- workflow() %>%
+  add_recipe(rec_1) %>%
+  add_model(logit_mod)
+
+rec_1_fit <- rec_1_wflow %>% fit(ha_clean)
+
+extract_fit_parsnip(rec_1_fit)
+```
+
+#### LDA
+
+```{r}
+#| label: LDA-model-fitting
+
+lda_mod <- discrim_linear() %>%
+  set_engine("MASS") %>%
+  set_mode("classification")
+```
+
+#### QDA
+
+```{r}
+#| label: QDA-model-fitting
+
+qda_mod <- discrim_regularized(frac_common_cov = 0) %>% 
+  set_engine('klaR') %>% 
+  set_mode('classification')
+```
+
+# Part Two: Interpreting Models
+
+#### Interpretation
+
+#### ROC Curve
+
+# Part Three: Metrics
+
+Consider the following metrics:
+
+-   **True Positive Rate** or **Sensitivity** = Of the observations that are truly Class A, how many were predicted to be Class A?
+
+-   **Precision** or **Positive Predictive Value** = Of all the observations classified as Class A, how many of them were truly from Class A?
+
+-   **True Negative Rate** or **Specificity** = Of all the observations classified as NOT Class A, how many were truly NOT Class A?
+
+Compute each of these metrics (cross-validated) for your four models in Part One.
+
+#### KNN
+
+#### Logistic Regression
+
+#### LDA
+
+#### QDA
+
+# Part Four: Validation
+
+```{r}
+#| label: validation-data
+
+```
+
+Use each of your final models in Part One to:
+
+-   predict the `output` variable in the validation dataset
+-   output a confusion matrix
+-   report the `roc.auc`, the `precision`, and the `recall`
+
+Compare these values to the cross-validated estimates you reported in Part One. Did our measure of model success turn out to be approximately correct for the validation data?
+
+#### KNN
+
+#### Logistic Regression
+
+#### LDA
+
+#### QDA
+
+# Part Four: Discussion
+
+#### Q1
+
+The hospital faces severe lawsuits if they deem a patient to be low risk, and that patient later experiences a heart attack.
+
+#### Q2
+
+The hospital is overfull, and wants to only use bed space for patients most in need of monitoring due to heart attack risk.
+
+#### Q3
+
+The hospital is studying root causes of heart attacks, and would like to understand which biological measures are associated with heart attack risk.
+
+#### Q4
+
+The hospital is training a new batch of doctors, and they would like to compare the diagnoses of these doctors to the predictions given by the algorithm to measure the ability of new doctors to diagnose patients.
