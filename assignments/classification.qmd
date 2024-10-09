@@ -83,8 +83,10 @@ fit_model <- function(data, data_cv, mod, rec, rec_name) {
   
   roc_auc <- collect_metrics(rec_fit_cv) %>% filter(.metric == 'roc_auc') %>% pull(mean)
 
-  conf_matrix <- data %>%
-    mutate(predicted_response = predict(rec_fit, .)$.pred_class) %>%
+  pred_output <- data %>%
+    mutate(predicted_response = predict(rec_fit, .)$.pred_class) 
+  
+  conf_matrix <- pred_output %>%
     conf_mat(truth = output, estimate = predicted_response) %>%
     tidy() %>%
     pivot_wider(names_from = name, values_from = value)
@@ -100,7 +102,9 @@ fit_model <- function(data, data_cv, mod, rec, rec_name) {
     TN = tn,
     FP = fp,
     FN = fn,
-    TP = tp
+    TP = tp,
+    Precision = precision(pred_output, truth = output, estimate = predicted_response)$.estimate,
+    Recall = recall(pred_output, truth = output, estimate = predicted_response)$.estimate
   )
   
 }
@@ -196,6 +200,15 @@ rec_4 <- rec_3 %>%
 rec_5 <- rec_3 %>%
   step_interact(terms = ~ age:starts_with("cp_"))
 
+rec_6 <- rec_main %>%
+  step_interact(terms = ~ thalach:starts_with("cp_"))
+
+rec_7 <- rec_main %>%
+  step_interact(terms = ~ age:thalach)
+
+rec_8 <- rec_main %>%
+  step_interact(terms = ~ thalach:starts_with("cp_") + age:thalach)
+
 test_recipes <- append(
   base_recipes,
   list(
@@ -203,7 +216,10 @@ test_recipes <- append(
     rec_2 = rec_2,
     rec_3 = rec_3,
     rec_4 = rec_4,
-    rec_5 = rec_5
+    rec_5 = rec_5,
+    rec_6 = rec_6,
+    rec_7 = rec_7,
+    rec_8 = rec_8
   )
 )
 ```
@@ -252,6 +268,21 @@ results_knn <- list_rbind(map2(test_recipes, names(test_recipes), ~{
 results_knn %>% slice_max(ROC_AUC, n = 5)
 ```
 
+```{r}
+#| label: best-KNN
+
+knn_mod <- nearest_neighbor(neighbors = 89) %>%
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+knn_wflow <- workflow() %>%
+    add_recipe(rec_main) %>%
+    add_model(knn_mod)
+  
+best_knn <- knn_wflow %>% fit(ha_clean)
+```
+
+
 #### Logistic Regression
 
 ```{r}
@@ -264,6 +295,16 @@ logit_mod <- logistic_reg() %>%
 results_logreg <- list_rbind(map2(test_recipes, names(test_recipes), ~fit_model(ha_clean, ha_cv, logit_mod, .x, .y)))
 
 results_logreg %>% slice_max(ROC_AUC, n = 5)
+```
+
+```{r}
+#| label: best-LR
+
+logreg_wflow <- workflow() %>%
+    add_recipe(rec_7) %>%
+    add_model(logit_mod)
+  
+best_logreg <- logreg_wflow %>% fit(ha_clean)
 ```
 
 #### LDA
@@ -280,6 +321,16 @@ results_lda <- list_rbind(map2(test_recipes, names(test_recipes), ~fit_model(ha_
 results_lda %>% slice_max(ROC_AUC, n = 5)
 ```
 
+```{r}
+#| label: best-LDA
+
+lda_wflow <- workflow() %>%
+    add_recipe(rec_7) %>%
+    add_model(lda_mod)
+  
+best_lda <- lda_wflow %>% fit(ha_clean)
+```
+
 #### QDA
 
 ```{r}
@@ -294,11 +345,55 @@ results_qda <- list_rbind(map2(test_recipes, names(test_recipes), ~fit_model(ha_
 results_qda %>% slice_max(ROC_AUC, n = 5)
 ```
 
+```{r}
+#| label: best-QDA
+
+qda_wflow <- workflow() %>%
+    add_recipe(rec_7) %>%
+    add_model(qda_mod)
+  
+best_qda <- qda_wflow %>% fit(ha_clean)
+```
+
 # Part Two: Interpreting Models
 
 #### Interpretation
 
+```{r}
+best_knn %>% extract_fit_parsnip()
+best_logreg %>% extract_fit_parsnip()
+best_lda %>% extract_fit_parsnip()
+best_qda %>% extract_fit_parsnip()
+```
+
 #### ROC Curve
+
+```{r}
+#| label: ROC-plot-function
+
+plot_roc_auc <- function(data, fit_mod) {
+  
+data %>%
+  mutate(
+    preds = predict(fit_mod, data, type = "prob")$.pred_1
+  ) %>%
+  roc_curve(
+    truth = output,
+    preds
+  ) %>%
+  autoplot()
+  
+}
+```
+
+```{r}
+#| label: ROC-plots
+
+best_mods <- list(best_knn, best_logreg, best_lda, best_qda)
+
+map(best_mods, ~plot_roc_auc(ha_clean, .))
+```
+
 
 # Part Three: Metrics
 
@@ -314,17 +409,65 @@ Compute each of these metrics (cross-validated) for your four models in Part One
 
 #### KNN
 
+```{r}
+#| label: KNN-metrics
+
+knn_wflow %>%
+  fit_resamples(ha_cv,
+                metrics = metric_set(sensitivity, specificity, ppv)) %>%
+  collect_metrics()
+```
+
 #### Logistic Regression
+
+```{r}
+#| label: LR-metrics
+
+logreg_wflow %>%
+  fit_resamples(ha_cv,
+                metrics = metric_set(sensitivity, specificity, ppv)) %>%
+  collect_metrics()
+```
 
 #### LDA
 
+```{r}
+#| label: LDA-metrics
+
+lda_wflow %>%
+  fit_resamples(ha_cv,
+                metrics = metric_set(sensitivity, specificity, ppv)) %>%
+  collect_metrics()
+```
+
 #### QDA
+
+```{r}
+#| label: QDA-metrics
+
+qda_wflow %>%
+  fit_resamples(ha_cv,
+                metrics = metric_set(sensitivity, specificity, ppv)) %>%
+  collect_metrics()
+```
 
 # Part Four: Validation
 
 ```{r}
-#| label: validation-data
+#| label: data-cleaning-validation
+#| message: false
 
+ha_val <- read_csv(here::here('data', 'heart_attack_validation.csv'))
+
+ha_val_clean <- ha_val %>%
+  mutate(
+    across(.cols = c(sex, cp, restecg), 
+           .fns = ~as.factor(.x)
+           ), 
+    output = factor(output, levels = c(1, 0)
+                    ) # make "at-risk" the primary target
+  ) %>%
+  drop_na(output)
 ```
 
 Use each of your final models in Part One to:
@@ -337,11 +480,146 @@ Compare these values to the cross-validated estimates you reported in Part One. 
 
 #### KNN
 
+```{r}
+#| label: validation-KNN
+
+ha_val_clean <- ha_val_clean %>%
+  mutate(
+    pred_knn = predict(best_knn, new_data = ha_val_clean)$.pred_class,
+    proba_knn = predict(best_knn, new_data = ha_val_clean, type = 'prob')$.pred_1
+    )
+
+ha_val_clean %>%
+  conf_mat(truth = output, estimate = pred_knn)
+
+roc_auc_knn <- ha_val_clean %>%
+  roc_auc(
+    truth = output,
+    proba_knn
+    )
+
+precision_knn <- ha_val_clean %>%
+  precision(
+    truth = output,
+    estimate = pred_knn
+  )
+
+recall_knn <- ha_val_clean %>%
+  recall(
+    truth = output,
+    estimate = pred_knn
+  )
+
+rbind(roc_auc_knn, precision_knn, recall_knn)
+results_knn %>% slice_max(ROC_AUC)
+```
+
+My ROC AUC value for the validated data is slightly higher than it was for the CV data.
+
 #### Logistic Regression
+
+```{r}
+#| label: validation-LR
+
+ha_val_clean <- ha_val_clean %>%
+  mutate(
+    pred_logreg = predict(best_logreg, new_data = ha_val_clean)$.pred_class,
+    proba_logreg = predict(best_logreg, new_data = ha_val_clean, type = 'prob')$.pred_1
+    )
+
+ha_val_clean %>%
+  conf_mat(truth = output, estimate = pred_logreg)
+
+roc_auc_logreg <- ha_val_clean %>%
+  roc_auc(
+    truth = output,
+    proba_logreg
+    )
+
+precision_logreg <- ha_val_clean %>%
+  precision(
+    truth = output,
+    estimate = pred_logreg
+  )
+
+recall_logreg <- ha_val_clean %>%
+  recall(
+    truth = output,
+    estimate = pred_logreg
+  )
+
+rbind(roc_auc_logreg, precision_logreg, recall_logreg)
+```
 
 #### LDA
 
+```{r}
+#| label: validation-LDA
+
+ha_val_clean <- ha_val_clean %>%
+  mutate(
+    pred_lda = predict(best_lda, new_data = ha_val_clean)$.pred_class,
+    proba_lda = predict(best_lda, new_data = ha_val_clean, type = 'prob')$.pred_1
+    )
+
+ha_val_clean %>%
+  conf_mat(truth = output, estimate = pred_lda)
+
+roc_auc_lda <- ha_val_clean %>%
+  roc_auc(
+    truth = output,
+    proba_lda
+    )
+
+precision_lda <- ha_val_clean %>%
+  precision(
+    truth = output,
+    estimate = pred_lda
+  )
+
+recall_lda <- ha_val_clean %>%
+  recall(
+    truth = output,
+    estimate = pred_lda
+  )
+
+rbind(roc_auc_lda, precision_lda, recall_lda)
+```
+
 #### QDA
+
+```{r}
+#| label: validation-QDA
+
+ha_val_clean <- ha_val_clean %>%
+  mutate(
+    pred_qda = predict(best_qda, new_data = ha_val_clean)$.pred_class,
+    proba_qda = predict(best_qda, new_data = ha_val_clean, type = 'prob')$.pred_1
+    )
+
+ha_val_clean %>%
+  conf_mat(truth = output, estimate = pred_qda)
+
+roc_auc_qda <- ha_val_clean %>%
+  roc_auc(
+    truth = output,
+    proba_qda
+    )
+
+precision_qda <- ha_val_clean %>%
+  precision(
+    truth = output,
+    estimate = pred_qda
+  )
+
+recall_qda <- ha_val_clean %>%
+  recall(
+    truth = output,
+    estimate = pred_qda
+  )
+
+rbind(roc_auc_qda, precision_qda, recall_qda)
+```
 
 # Part Four: Discussion
 
