@@ -1,6 +1,6 @@
 ---
 title: "Classification: LDA and QDA"
-author: "YOUR NAME HERE"
+author: "Andrew Kerr"
 format: 
   html:
     code-fold: true
@@ -83,6 +83,8 @@ ins %>%
 ```{r}
 lda_fit_2
 
+coefficients <- lda_fit_2$fit$scaling
+
 my_slope = coefficients[1] / 
               (-1 *coefficients[2])
 ```
@@ -103,7 +105,53 @@ ins %>%
 
 Use cross-validation to find the best LDA model to predict smoker status.
 
+```{r}
+ins_cvs <- vfold_cv(ins, v = 10)
+
+################################################################################
+
+recipe_1 <- recipe(smoker ~ ., data = ins) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_nominal_predictors())
+
+recipe_2 <- recipe(smoker ~ charges + bmi + age, data = ins) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_nominal_predictors())
+
+recipe_3 <- recipe(smoker ~ charges + bmi + age + sex, data = ins) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_nominal_predictors())
+
+################################################################################
+
+workflow_1 <- workflow() %>%
+  add_model(lda_mod) %>%
+  add_recipe(recipe_1)
+
+workflow_2 <- workflow() %>%
+  add_model(lda_mod) %>%
+  add_recipe(recipe_2)
+
+workflow_3 <- workflow() %>%
+  add_model(lda_mod) %>%
+  add_recipe(recipe_3)
+
+################################################################################
+
+fit_1 <- workflow_1 %>% fit_resamples(ins_cvs)
+fit_2 <- workflow_2 %>% fit_resamples(ins_cvs)
+fit_3 <- workflow_3 %>% fit_resamples(ins_cvs)
+
+################################################################################
+
+fit_1 %>% collect_metrics()
+fit_2 %>% collect_metrics()
+fit_3 %>% collect_metrics()
+```
+
 How does it compare to the Logistic Regression and KNN approaches?
+
+Logistic regression has a higher accuracy, but Logistic Regression and LDA have about the same ROC AUC with KNN having a slightly higher value.
 
 # Quadratic Discriminant Analysis
 
@@ -119,5 +167,33 @@ qda_mod <- discrim_regularized(frac_common_cov = 0) %>%
 
 Use Cross-Validation to find the best QDA model to predict smoker status.
 
+```{r}
+
+workflow_1 <- workflow() %>%
+  add_model(qda_mod) %>%
+  add_recipe(recipe_1)
+
+workflow_2 <- workflow() %>%
+  add_model(qda_mod) %>%
+  add_recipe(recipe_2)
+
+workflow_3 <- workflow() %>%
+  add_model(qda_mod) %>%
+  add_recipe(recipe_3)
+
+################################################################################
+
+fit_1 <- workflow_1 %>% fit_resamples(ins_cvs)
+fit_2 <- workflow_2 %>% fit_resamples(ins_cvs)
+fit_3 <- workflow_3 %>% fit_resamples(ins_cvs)
+
+################################################################################
+
+fit_1 %>% collect_metrics()
+fit_2 %>% collect_metrics()
+fit_3 %>% collect_metrics()
+```
+
 How does it compare to the LDA, Logistic Regression, and KNN approaches?
- 
+
+This approach has a slightly worse accuracy, but a ROC AUC on par LDA and Logistic Regression.
