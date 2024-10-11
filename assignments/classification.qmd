@@ -20,6 +20,8 @@ library(glmnet)
 library(discrim)
 library(GGally)
 library(car)
+
+set.seed(42069)
 ```
 
 # Part Zero
@@ -271,7 +273,7 @@ results_knn %>% slice_max(ROC_AUC, n = 5)
 ```{r}
 #| label: best-KNN
 
-knn_mod <- nearest_neighbor(neighbors = 89) %>%
+knn_mod <- nearest_neighbor(neighbors = 59) %>%
   set_engine("kknn") %>%
   set_mode("classification")
 
@@ -282,6 +284,7 @@ knn_wflow <- workflow() %>%
 best_knn <- knn_wflow %>% fit(ha_clean)
 ```
 
+To tune k, I did grid search from k = 1 to k = 100 with 50 levels. From the output, I selected the k with the greatest ROC AUC value and used this as my best k.
 
 #### Logistic Regression
 
@@ -349,7 +352,7 @@ results_qda %>% slice_max(ROC_AUC, n = 5)
 #| label: best-QDA
 
 qda_wflow <- workflow() %>%
-    add_recipe(rec_7) %>%
+    add_recipe(rec_main) %>%
     add_model(qda_mod)
   
 best_qda <- qda_wflow %>% fit(ha_clean)
@@ -365,6 +368,8 @@ best_logreg %>% extract_fit_parsnip()
 best_lda %>% extract_fit_parsnip()
 best_qda %>% extract_fit_parsnip()
 ```
+
+The most important predictors to predicting heart attack risk are thalach, cp, and age as models only using these as predictors resulted in the greatest ROC AUC. This was consistent across all models.
 
 #### ROC Curve
 
@@ -514,7 +519,7 @@ rbind(roc_auc_knn, precision_knn, recall_knn)
 results_knn %>% slice_max(ROC_AUC)
 ```
 
-My ROC AUC value for the validated data is slightly higher than it was for the CV data.
+My ROC AUC value for the validated data is slightly higher than it was for the CV data. The precision is higher for the validation data, but the recall is greater for the cross-validated data.
 
 #### Logistic Regression
 
@@ -549,7 +554,10 @@ recall_logreg <- ha_val_clean %>%
   )
 
 rbind(roc_auc_logreg, precision_logreg, recall_logreg)
+results_logreg %>% slice_max(ROC_AUC)
 ```
+
+The ROC AUC value for the validation data is greater than it was in the cross-validated data, and the precision is slightly higher with the recall being slightly lower. 
 
 #### LDA
 
@@ -584,7 +592,10 @@ recall_lda <- ha_val_clean %>%
   )
 
 rbind(roc_auc_lda, precision_lda, recall_lda)
+results_lda %>% slice_max(ROC_AUC)
 ```
+
+The ROC AUC value for the validation data is greater than it was in the cross-validated data, and the precision is slightly higher with the recall being slightly lower.
 
 #### QDA
 
@@ -619,7 +630,10 @@ recall_qda <- ha_val_clean %>%
   )
 
 rbind(roc_auc_qda, precision_qda, recall_qda)
+results_qda %>% slice_max(ROC_AUC)
 ```
+
+The ROC AUC value for the validation data is greater than it was in the cross-validated data, and the precision is slightly higher with the recall being slightly lower.
 
 # Part Four: Discussion
 
@@ -627,14 +641,30 @@ rbind(roc_auc_qda, precision_qda, recall_qda)
 
 The hospital faces severe lawsuits if they deem a patient to be low risk, and that patient later experiences a heart attack.
 
+We want to minimize false negatives, so we should use recall/sensitivity in model selection.
+
+I would recommend QDA since this model has the highest value for recall on the validated data above.
+
 #### Q2
 
 The hospital is overfull, and wants to only use bed space for patients most in need of monitoring due to heart attack risk.
+
+We want to maximize true positives and minimize false positives to save room for those who truly need it, so we would use precision.
+
+I would recommend LDA because this model maximizes the separation between classes, which is what we want to do here.
 
 #### Q3
 
 The hospital is studying root causes of heart attacks, and would like to understand which biological measures are associated with heart attack risk.
 
+We want to prioritize interpretability and feature importance, so we should use ROC AUC and accuracy to ensure that our model performs well and is using the most important features.
+
+I would recommend logistic regression since this model is the most interpretable model since it provides coefficients.
+
 #### Q4
 
 The hospital is training a new batch of doctors, and they would like to compare the diagnoses of these doctors to the predictions given by the algorithm to measure the ability of new doctors to diagnose patients.
+
+We want an overall robust model that is generally good, so we should use accuracy since we are testing to see if the new doctors are correct.
+
+I would recommend KNN since its algorithm works similar to how a human thinks, classifying cases based off of similar cases. 
