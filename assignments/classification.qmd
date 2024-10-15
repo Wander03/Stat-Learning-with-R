@@ -3,7 +3,7 @@ title: "Classification: LDA and QDA"
 author: "Andrew Kerr"
 format: 
   html:
-    code-fold: true
+    code-fold: false
     code-line-numbers: true
     code-tools: true
     self-contained: true
@@ -20,6 +20,7 @@ library(glmnet)
 library(discrim)
 library(GGally)
 library(car)
+library(kableExtra)
 
 set.seed(42069)
 ```
@@ -267,7 +268,7 @@ results_knn <- list_rbind(map2(test_recipes, names(test_recipes), ~{
   
   }))
 
-results_knn %>% slice_max(ROC_AUC, n = 5)
+results_knn %>% slice_max(ROC_AUC, n = 5) %>% kable()
 ```
 
 ```{r}
@@ -297,7 +298,7 @@ logit_mod <- logistic_reg() %>%
 
 results_logreg <- list_rbind(map2(test_recipes, names(test_recipes), ~fit_model(ha_clean, ha_cv, logit_mod, .x, .y)))
 
-results_logreg %>% slice_max(ROC_AUC, n = 5)
+results_logreg %>% slice_max(ROC_AUC, n = 5) %>% kable()
 ```
 
 ```{r}
@@ -321,7 +322,7 @@ lda_mod <- discrim_linear() %>%
 
 results_lda <- list_rbind(map2(test_recipes, names(test_recipes), ~fit_model(ha_clean, ha_cv, lda_mod, .x, .y)))
 
-results_lda %>% slice_max(ROC_AUC, n = 5)
+results_lda %>% slice_max(ROC_AUC, n = 5) %>% kable()
 ```
 
 ```{r}
@@ -345,7 +346,7 @@ qda_mod <- discrim_regularized(frac_common_cov = 0) %>%
 
 results_qda <- list_rbind(map2(test_recipes, names(test_recipes), ~fit_model(ha_clean, ha_cv, qda_mod, .x, .y)))
 
-results_qda %>% slice_max(ROC_AUC, n = 5)
+results_qda %>% slice_max(ROC_AUC, n = 5) %>% kable()
 ```
 
 ```{r}
@@ -420,7 +421,8 @@ Compute each of these metrics (cross-validated) for your four models in Part One
 knn_wflow %>%
   fit_resamples(ha_cv,
                 metrics = metric_set(sensitivity, specificity, ppv)) %>%
-  collect_metrics()
+  collect_metrics() %>% 
+  kable()
 ```
 
 #### Logistic Regression
@@ -431,7 +433,8 @@ knn_wflow %>%
 logreg_wflow %>%
   fit_resamples(ha_cv,
                 metrics = metric_set(sensitivity, specificity, ppv)) %>%
-  collect_metrics()
+  collect_metrics() %>% 
+  kable()
 ```
 
 #### LDA
@@ -442,7 +445,8 @@ logreg_wflow %>%
 lda_wflow %>%
   fit_resamples(ha_cv,
                 metrics = metric_set(sensitivity, specificity, ppv)) %>%
-  collect_metrics()
+  collect_metrics() %>% 
+  kable()
 ```
 
 #### QDA
@@ -453,7 +457,8 @@ lda_wflow %>%
 qda_wflow %>%
   fit_resamples(ha_cv,
                 metrics = metric_set(sensitivity, specificity, ppv)) %>%
-  collect_metrics()
+  collect_metrics() %>% 
+  kable()
 ```
 
 # Part Four: Validation
@@ -515,8 +520,8 @@ recall_knn <- ha_val_clean %>%
     estimate = pred_knn
   )
 
-rbind(roc_auc_knn, precision_knn, recall_knn)
-results_knn %>% slice_max(ROC_AUC)
+rbind(roc_auc_knn, precision_knn, recall_knn) %>% kable()
+results_knn %>% slice_max(ROC_AUC) %>% kable()
 ```
 
 My ROC AUC value for the validated data is slightly higher than it was for the CV data. The precision is higher for the validation data, but the recall is greater for the cross-validated data.
@@ -553,8 +558,8 @@ recall_logreg <- ha_val_clean %>%
     estimate = pred_logreg
   )
 
-rbind(roc_auc_logreg, precision_logreg, recall_logreg)
-results_logreg %>% slice_max(ROC_AUC)
+rbind(roc_auc_logreg, precision_logreg, recall_logreg) %>% kable()
+results_logreg %>% slice_max(ROC_AUC) %>% kable()
 ```
 
 The ROC AUC value for the validation data is greater than it was in the cross-validated data, and the precision is slightly higher with the recall being slightly lower. 
@@ -591,8 +596,8 @@ recall_lda <- ha_val_clean %>%
     estimate = pred_lda
   )
 
-rbind(roc_auc_lda, precision_lda, recall_lda)
-results_lda %>% slice_max(ROC_AUC)
+rbind(roc_auc_lda, precision_lda, recall_lda) %>% kable()
+results_lda %>% slice_max(ROC_AUC) %>% kable()
 ```
 
 The ROC AUC value for the validation data is greater than it was in the cross-validated data, and the precision is slightly higher with the recall being slightly lower.
@@ -629,8 +634,8 @@ recall_qda <- ha_val_clean %>%
     estimate = pred_qda
   )
 
-rbind(roc_auc_qda, precision_qda, recall_qda)
-results_qda %>% slice_max(ROC_AUC)
+rbind(roc_auc_qda, precision_qda, recall_qda) %>% kable()
+results_qda %>% slice_max(ROC_AUC) %>% kable()
 ```
 
 The ROC AUC value for the validation data is greater than it was in the cross-validated data, and the precision is slightly higher with the recall being slightly lower.
