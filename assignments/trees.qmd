@@ -1,0 +1,268 @@
+---
+title: "Lab 4: Decision Trees"
+author: "Andrew Kerr"
+format: 
+  html:
+    code-fold: false
+    code-line-numbers: true
+    code-tools: true
+    self-contained: true
+editor: source
+execute:
+  message: false
+---
+
+## Setup
+
+Declare your libraries:
+
+```{r}
+#| label: libraries-r
+#| include: false
+library(tidyverse)
+library(tidymodels)
+library(glmnet)
+library(discrim)
+library(rpart)
+library(rpart.plot)
+library(baguette)
+library(janitor)
+
+set.seed(123)
+```
+
+# Dataset 1: Mushrooms
+
+The first dataset we will study today concerns mushrooms that grow in the wild. An expert mushroom forager can identify the species by its appearance, and determine if the mushroom is edible or poisonous.
+
+Can we train a model to do the same?
+
+Read the data in as follows. (You do need the extra bit of code in the `read_csv` function, make sure you copy it over.)
+
+```{r}
+mushrooms <- read_csv("https://www.dropbox.com/s/jk5q3dq1u63ey1e/mushrooms.csv?dl=1",
+                      col_types = str_c(rep("c", 23), collapse = "")
+                      ) 
+
+mushrooms <- mushrooms %>%
+  mutate(
+    across(.cols = everything(), 
+           .fns = ~ as.factor(.x)
+           )
+    ) %>%
+  janitor::clean_names()
+
+mushrooms <- mushrooms %>%
+  dplyr::select(-veil_type)
+```
+
+You can find further documentation of the dataset here: https://www.kaggle.com/uciml/mushroom-classification
+
+## Part One: A perfect tree
+
+1. Fit a single decision tree to the **full** mushroom data, and plot the resulting tree. You should find that almost all mushrooms are perfectly classified; that is, the resulting leaf nodes are very close to 100% pure.
+
+```{r}
+#| label: perfect-tree-fit
+
+tree_mod <- decision_tree() %>%
+  set_engine("rpart") %>%
+  set_mode("classification")
+
+mroom_recipe <- recipe(class ~ ., 
+                     data = mushrooms)
+
+tree_wflow <- workflow() %>%
+  add_model(tree_mod) %>% 
+  add_recipe(mroom_recipe)
+
+tree_fit <- tree_wflow %>% fit(mushrooms)
+
+tree_fitted <- tree_fit %>% 
+  extract_fit_parsnip()
+
+rpart.plot(tree_fitted$fit)
+```
+
+2. Based on the tree that results, suggest a "nature guide" that tells people which mushrooms are safe to eat and which aren't.
+
+If the mushroom smells like almond, anise, or nothing and has a buff, black, chocolate, brown, orange, purple, white, or yellow (aka not green) spore print color, then there is a 99.99% chance that it is edible! On the other hand, if it smells like the previously mentioned smells and has a green spore print color or smells creosote, fishy, foul, musty, pungent, or spicy, then it is 100% poisonous!
+
+## Part Two: ... or is it?
+
+Before we send people off into the world to each poisonous mushrooms, we want to be confident of our guidelines. The decision tree in Q1 may achieve perfection on the data it is fit to, but do we believe these guidelines will hold for future data?
+
+Apply each of the following resampling and / or ensemble techniques to this classification problem. For each, you should either argue that
+
+(a) The classification rules we learned in Part One probably apply to all mushrooms; or
+
+(b) The classification rules we learned in Part One are overfit to this particular sample of mushrooms and / or set of predictors.
+
+3. Cross-validation
+
+```{r}
+#| label: CV-mushroom
+
+mroom_cvs <- vfold_cv(mushrooms, v = 10)
+
+tree_fit_cv <- tree_wflow %>% fit_resamples(mroom_cvs,
+                                         metrics = metric_set(accuracy, roc_auc, precision, recall)
+                                         )
+
+tree_fit_cv %>% 
+  collect_metrics()
+```
+
+Based on the CV results, the classification results we learned in Part 1 definitely apply to all mushrooms! Yippee, have a feast! Our accuracy is almost perfect, along with our precision, recall, and ROC AUC.
+
+4. Bagging
+
+```{r}
+#| label: bagging-mushroom
+
+bag_tree_mod <- bag_tree() %>%
+  set_engine("rpart", times = 5) %>%
+  set_mode("classification")
+
+bag_tree_wflow <- workflow() %>%
+  add_recipe(mroom_recipe) %>%
+  add_model(bag_tree_mod)
+
+bag_tree_fit <- bag_tree_wflow %>%
+  fit(mushrooms)
+
+bag_tree_fit %>% 
+  extract_fit_parsnip()
+
+mushrooms <- mushrooms %>%
+  bind_cols(predict(bag_tree_fit, mushrooms, type = "prob")) %>%
+  mutate(
+    pred_bagging = predict(bag_tree_fit, mushrooms)$.pred_class,
+    pred_e_bagging = .pred_e,
+    pred_p_bagging = .pred_p
+  ) %>%
+  select(-.pred_e, -.pred_p)
+
+accuracy_tree_bag <- mushrooms %>%
+  accuracy(
+    truth = class,
+    estimate = pred_bagging
+  )
+
+roc_auc_tree_bag <- mushrooms %>%
+  roc_auc(
+    truth = class,
+    pred_e_bagging
+    )
+
+precision_tree_bag <- mushrooms %>%
+  precision(
+    truth = class,
+    estimate = pred_bagging
+  )
+
+recall_tree_bag <- mushrooms %>%
+  recall(
+    truth = class,
+    estimate = pred_bagging
+  )
+
+rbind(accuracy_tree_bag, roc_auc_tree_bag, precision_tree_bag, recall_tree_bag)
+```
+
+Oh wow, we are even better then we were with CV; we are perfect in all metrics! We should, once again, for sure without a doubt, follow our rules from Part 1.
+
+5. Random forests
+
+```{r}
+#| label: RF-mushroom
+
+mushrooms_reduced <- mushrooms %>%
+  select(class, 
+         sample(2:22, size = 3)
+         )
+
+mroom_recipe_2 <- recipe(class ~ ., 
+                     data = mushrooms_reduced)
+
+rf_mod <- rand_forest(mtry = 3) %>%
+  set_engine("ranger") %>%
+  set_mode("classification")
+
+bag_tree_wflow <- workflow() %>%
+  add_recipe(mroom_recipe_2) %>%
+  add_model(rf_mod)
+
+bag_tree_fit <- bag_tree_wflow %>%
+  fit(mushrooms)
+
+bag_tree_fit %>% 
+  extract_fit_parsnip()
+
+mushrooms <- mushrooms %>%
+  bind_cols(predict(bag_tree_fit, mushrooms, type = "prob")) %>%
+  mutate(
+    pred_rf = predict(bag_tree_fit, mushrooms)$.pred_class,
+    pred_e_rf = .pred_e,
+    pred_p_rf = .pred_p
+  ) %>%
+  select(-.pred_e, -.pred_p)
+
+accuracy_tree_rf <- mushrooms %>%
+  accuracy(
+    truth = class,
+    estimate = pred_rf
+  )
+
+roc_auc_tree_rf <- mushrooms %>%
+  roc_auc(
+    truth = class,
+    pred_e_rf
+    )
+
+precision_tree_rf <- mushrooms %>%
+  precision(
+    truth = class,
+    estimate = pred_rf
+  )
+
+recall_tree_rf <- mushrooms %>%
+  recall(
+    truth = class,
+    estimate = pred_rf
+  )
+
+rbind(accuracy_tree_rf, roc_auc_tree_rf, precision_tree_rf, recall_tree_rf)
+```
+
+Yet again, we are looking solid! Our accuracy and precision have fallen below 90%, but a drop in precision tells us out of mushrooms we classify as edible, we incorrectly said a couple that are poisonous are not In other words, we messed up the dangerous way so go on eating, bust with some caution!
+
+# Dataset 2: Telecom Customers
+
+Congratulations! You have been hired by the Data Science division of a major telecommunication company.
+
+The Sales division of the company wants to understand how customer demographics - such as their age, income, marital status, employment status, etc - impact the customers' behavior. They have identified four different types of customers, and labeled a dataset of existing customers with these categories.
+
+```{r}
+tele <- read_csv("https://www.dropbox.com/s/9dymy30v394ud8h/Telecust1.csv?dl=1")
+```
+
+Further documentation of this data can be found here: https://www.kaggle.com/prathamtripathi/customersegmentation
+
+You've been tasked with studying the customer demographics and customer categories. The company would like two results from you:
+
+- A model that can be used to predict what category a new customer who signs up will likely fall into.
+
+- Insight into what demographics are associated with these customer differences.
+
+#### Part Four: Report to your manager
+
+Your manager, the head of the Data Science department, would like a summary of your work. She does not need to see every single detail of every step of your process, but she does need to know a basic outline of what you tried, how you made your decisions, and why you settled on certain choices.
+
+You can assume she has taken Stat 551, and you may use any "lingo" you want; for example, you can reference the Gini Index without having to explain what it is.
+
+#### Part Five: Report to Sales
+
+Now that your manager has approved your work, you're ready to present the results to Sales. The Sales team has zero data science training. They have some understanding of things like percentages, means, and medians - but they do not know or care about modeling details.
+
+Summarize the results of your work in a way that is understandable to the Sales team, and only contains the level of technical detail that they might need to properly use the results in their job. You should NOT use any lingo. For example, instead of saying "We chose the model with highest precision", you should say, "We chose the model that was least likely to misclassify an A-type customer as B-type."
