@@ -1,0 +1,254 @@
+---
+title: "Classification: Bagging and Random Forests"
+author: "Andrew Kerr"
+format: 
+  html:
+    code-fold: true
+    code-line-numbers: true
+    code-tools: true
+    embed-resources: true
+editor: source
+execute:
+  message: false
+---
+
+## Setup
+
+Declare your libraries:
+
+```{r}
+#| label: libraries-r
+#| include: false
+
+library(tidyverse)
+library(tidymodels)
+library(glmnet)
+library(discrim)
+library(rpart)
+library(rpart.plot)
+library(baguette)
+```
+
+# Setup
+
+```{r}
+#| label: code-from-slides
+
+cann <- read_csv("https://www.dropbox.com/s/s2a1uoiegitupjc/cannabis_full.csv?dl=1")
+
+cann <- cann %>%
+  mutate(
+    Type = factor(Type)
+  ) %>%
+  rename(
+    Spicy = `Spicy/Herbal`
+  ) %>%
+  drop_na()
+
+cann_cvs <- vfold_cv(cann, v = 5)
+
+cann_recipe <- recipe(Type ~ ., 
+                     data = cann) %>%
+  step_rm(Strain, Effects, Flavor, Dry, Mouth)
+
+tree_mod <- decision_tree() %>%
+  set_engine("rpart") %>%
+  set_mode("classification")
+
+tree_wflow <- workflow() %>%
+  add_recipe(cann_recipe) %>%
+  add_model(tree_mod)
+
+tree_fit_1 <- tree_wflow %>%
+  fit(cann)
+
+tree_fitted <- tree_fit_1 %>% 
+  pull_workflow_fit()
+
+rpart.plot(tree_fitted$fit, roundint = FALSE)
+```
+
+## Bagging
+
+```{r}
+#| label: bagging
+
+bag_tree_spec <- bag_tree() %>%
+  set_engine("rpart", times = 5) %>%
+  set_mode("classification")
+
+```
+
+## Random Forests
+
+```{r}
+#| label: random-forests
+
+rf_spec <- rand_forest(mtry = tune(), 
+                       min_n = tune(), 
+                       trees = 10) %>%
+  set_engine("ranger") %>%
+  set_mode("classification")
+
+#decide the smallest and largest values you are willing to consider for how many random parameters to choose ?????
+rf_grid <- grid_regular(mtry(c(1, 20)),
+                        min_n(),
+                        levels = 5
+                        )
+```
+
+# Your turn
+
+## Find the best *bagged* model for the cannabis data
+
+```{r}
+bag_spec <- bag_tree(cost_complexity = tune(), 
+                       min_n = tune(),
+                       tree_depth = tune()) %>%
+  set_engine("rpart", times = 5) %>%
+  set_mode("classification")
+
+bag_grid <- grid_regular(cost_complexity(),
+                        min_n(),
+                        tree_depth(),
+                        levels = 5
+                        )
+
+bag_wflow <- workflow() %>%
+  add_model(bag_spec) %>%
+  add_recipe(cann_recipe)
+
+bag_fit <- bag_wflow %>%
+  tune_grid(
+    grid = bag_grid,
+    resamples = cann_cvs
+    ) 
+
+bag_fit %>% 
+  collect_metrics() %>%
+  filter(.metric == 'roc_auc') %>%
+  slice_max(mean)
+```
+
+```{r}
+best_bag_spec <- bag_tree(cost_complexity = 0.0005623413, 
+                       min_n = 30,
+                       tree_depth = 8) %>%
+  set_engine("rpart", times = 5) %>%
+  set_mode("classification")
+
+bag_wflow <- workflow() %>%
+  add_model(best_bag_spec) %>%
+  add_recipe(cann_recipe)
+
+best_bag_fit <- bag_wflow %>%
+  fit(cann)
+```
+
+
+## Find the best *random forest* model for the cannabis data
+
+```{r}
+rf_wflow <- workflow() %>%
+  add_model(rf_spec) %>%
+  add_recipe(cann_recipe)
+
+rf_fit <- rf_wflow %>%
+  tune_grid(
+    grid = rf_grid,
+    resamples = cann_cvs
+    ) 
+
+rf_fit %>% 
+  collect_metrics() %>%
+  filter(.metric == 'roc_auc') %>%
+  slice_max(mean)
+```
+
+```{r}
+best_rf_spec <- rand_forest(mtry = 15, 
+                       min_n = 40) %>%
+  set_engine("ranger") %>%
+  set_mode("classification")
+
+rf_wflow <- workflow() %>%
+  add_model(best_rf_spec) %>%
+  add_recipe(cann_recipe)
+
+best_rf_fit <- rf_wflow %>%
+  fit(cann)
+```
+
+## Report some metrics on your models
+
+```{r}
+cann_bag <- cann %>%
+  bind_cols(predict(best_bag_fit, cann, type = "prob")) %>%
+  mutate(
+    pred_bag = predict(best_bag_fit, cann)$.pred_class,
+    pred_rf = predict(best_rf_fit, cann)$.pred_class
+  )
+
+cann_rf <- cann %>%
+  bind_cols(predict(best_rf_fit, cann, type = "prob")) %>%
+  mutate(
+    pred_bag = predict(best_bag_fit, cann)$.pred_class,
+    pred_rf = predict(best_rf_fit, cann)$.pred_class
+  )
+
+accuracy_tree_bag <- cann_bag %>%
+  accuracy(
+    truth = Type,
+    estimate = pred_bag
+  )
+
+gain_tree_bag <- cann_bag %>%
+  gain_capture(
+    truth = Type,
+    .pred_hybrid,
+    .pred_indica,
+    .pred_sativa
+    )
+
+precision_tree_bag <- cann_bag %>%
+  precision(
+    truth = Type,
+    estimate = pred_bag
+  )
+
+recall_tree_bag <- cann_bag %>%
+  recall(
+    truth = Type,
+    estimate = pred_bag
+  )
+
+accuracy_tree_rf <- cann_rf %>%
+  accuracy(
+    truth = Type,
+    estimate = pred_rf
+  )
+
+gain_tree_rf <- cann_rf %>%
+  gain_capture(
+    truth = Type,
+    .pred_hybrid,
+    .pred_indica,
+    .pred_sativa
+    )
+
+precision_tree_rf <- cann_rf %>%
+  precision(
+    truth = Type,
+    estimate = pred_rf
+  )
+
+recall_tree_rf <- cann_rf %>%
+  recall(
+    truth = Type,
+    estimate = pred_rf
+  )
+
+rbind(accuracy_tree_bag, precision_tree_bag, recall_tree_bag,gain_tree_bag)
+rbind(accuracy_tree_rf, precision_tree_rf, recall_tree_rf,gain_tree_rf)
+```
+
