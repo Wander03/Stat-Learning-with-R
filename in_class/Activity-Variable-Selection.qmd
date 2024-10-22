@@ -1,0 +1,385 @@
+---
+title: "Variable Selection and Regularization"
+author: "Andrew Kerr"
+format: 
+  html:
+    code-fold: true
+    code-line-numbers: true
+    code-tools: true
+embed-resources: true
+editor: source
+execute:
+  message: false
+---
+
+## Setup
+
+Declare your libraries:
+
+```{r}
+#| label: packages
+#| include: false
+
+library(tidyverse)
+library(tidymodels)
+library(glmnet)
+library(discrim)
+library(rpart)
+library(rpart.plot)
+library(baguette)
+library(leaps)
+
+set.seed(98249)
+```
+
+## Code from Lecture
+
+```{r}
+#| label: data-read-clean
+
+cann <- read_csv("https://www.dropbox.com/s/s2a1uoiegitupjc/cannabis_full.csv?dl=1")
+
+cann <- cann %>%
+  dplyr::select(-Type, -Strain, -Effects, -Flavor, -Dry, -Mouth) %>%
+  drop_na(Rating)
+
+```
+
+```{r}
+#| label: best-subset-selection
+
+models <- regsubsets(Rating ~ Creative + Energetic + Tingly, 
+                     data = cann, method = "exhaustive")
+
+summary(models)
+```
+
+```{r}
+#| label: best-subset-model-summary
+
+model_stats <- tibble(`Adj-R-Squared` = summary(models)$adjr2,
+                      `CP` = summary(models)$cp, 
+                      `BIC` = summary(models)$bic, 
+                      `model` = c("Creative", 
+                                  "Creative, Energetic", 
+                                  "Creative, Energetic, Tingly"
+                                  )
+                      ) %>% 
+  column_to_rownames(var = "model")
+
+model_stats
+```
+
+```{r}
+#| label: backward-selection
+#| warning: false
+
+models <- regsubsets(Rating ~ ., 
+                     data = cann, method = "backward",
+                     nvmax = 61)
+
+summary(models)
+```
+
+```{r}
+#| label: backward-selection-bic
+
+model_bic <- tibble(bic = summary(models)$bic, 
+                    model = seq(from = 1, 
+                                to = 61, 
+                                by = 1
+                                )
+                    )
+model_bic %>% 
+  mutate(model = str_c("Model ", model)
+         ) %>% 
+  arrange(bic) %>% 
+  column_to_rownames(var = "model")
+
+```
+
+```{r}
+#| label: plotting-bic-backward-selection
+
+ggplot(, aes(x = 1:61, y = model_bic$bic)) +
+  geom_point()
+```
+
+```{r}
+#| label: finding-min-bic-backward
+
+min_bic <- slice_min(model_bic, order_by = bic) %>% 
+  pull(model)
+
+summary(models)$outmat[min_bic, ]
+```
+
+## Try it!
+
+1. Determine the best model via **backwards selection**.  
+
+```{r}
+#| warning: false
+
+back_models <- regsubsets(Rating ~ ., 
+                          data = cann, method = "backward",
+                          nvmax = 61)
+
+back_bics <- tibble(bic = summary(back_models)$bic, 
+                    model = seq(from = 1, 
+                                to = 61, 
+                                by = 1
+                                )
+                    )
+
+min_bic <- slice_min(back_bics, order_by = bic) %>% 
+  pull(model)
+
+summary(back_models)$outmat[min_bic, ]
+```
+
+2. Fit that model to the data and report results.
+
+```{r}
+lr_mod <- linear_reg() %>%
+  set_mode("regression") %>%
+  set_engine("lm")
+
+lr_recipe <- recipe(Rating ~ Creative + Energetic + Tingly + Euphoric 
+                    + Relaxed + Aroused + Happy + Uplifted + Hungry + Talkative 
+                    + Giggly + Focused + Sleepy, data = cann)
+
+lr_wkflow <- workflow () %>%
+  add_recipe(lr_recipe) %>%
+  add_model(lr_mod)
+
+lr_wkflow %>%
+  fit(cann) %>%
+  extract_fit_parsnip()
+```
+
+Relaxed is the most important predictor and Giggly is the least. 
+
+3. Determine the best model via **forwards selection**.  
+
+```{r}
+#| warning: false
+
+forward_models <- regsubsets(Rating ~ ., 
+                          data = cann, method = "forward",
+                          nvmax = 61)
+
+forward_bics <- tibble(bic = summary(forward_models)$bic, 
+                    model = seq(from = 1, 
+                                to = 61, 
+                                by = 1
+                                )
+                    )
+
+min_bic <- slice_min(forward_bics, order_by = bic) %>% 
+  pull(model)
+
+summary(forward_models)$outmat[min_bic, ]
+```
+
+4. Fit that model to the data and report results.
+
+```{r}
+lr_mod <- linear_reg() %>%
+  set_mode("regression") %>%
+  set_engine("lm")
+
+lr_recipe <- recipe(Rating ~ Creative + Energetic + Tingly + Euphoric 
+                    + Relaxed + Aroused + Happy + Uplifted + Hungry + Talkative 
+                    + Giggly + Focused + Sleepy, data = cann)
+
+lr_wkflow <- workflow () %>%
+  add_recipe(lr_recipe) %>%
+  add_model(lr_mod)
+
+lr_wkflow %>%
+  fit(cann) %>%
+  extract_fit_parsnip()
+```
+
+This is the same as forward!
+
+## Regularization Code from Lecture
+
+```{r}
+#| label: lasso-regression
+
+lasso_spec <- linear_reg(penalty = 0.1, mixture = 1) %>%
+  set_engine("glmnet") %>%
+  set_mode("regression")
+
+lasso_spec_2 <- linear_reg(penalty = 0.5, mixture = 1) %>%
+  set_engine("glmnet") %>%
+  set_mode("regression")
+```
+
+```{r}
+#| label: ridge-regression
+
+ridge_spec <- linear_reg(penalty = 0.1, mixture = 0) %>%
+  set_engine("glmnet") %>%
+  set_mode("regression")
+
+ridge_spec_2 <- linear_reg(penalty = 0.5, mixture = 0) %>%
+  set_engine("glmnet") %>%
+  set_mode("regression")
+```
+
+## Try it!
+
+1. Fit a **LASSO** model to the cannabis data with lambda = 0.1.  Then fit one with lambda = 0.5.  What is different?
+
+```{r}
+cann_clean <- cann %>% drop_na()
+
+cann_recipe <- recipe(Rating ~ ., data = cann_clean)
+
+lasso_wkflw <- workflow() %>%
+  add_recipe(cann_recipe) %>%
+  add_model(lasso_spec)
+
+lasso_wkflw_2 <- workflow() %>%
+  add_recipe(cann_recipe) %>%
+  add_model(lasso_spec_2)
+
+lasso_wkflw %>% 
+  fit(cann_clean) %>%
+  extract_fit_parsnip() %>%
+  tidy()
+
+lasso_wkflw_2 %>% 
+  fit(cann_clean) %>%
+  extract_fit_parsnip() %>%
+  tidy()
+```
+
+With .5 everything is 0!
+
+2. Fit a **Ridge Regression** model to the cannabis data with lambda = 0.1.  Then fit one with lambda = 0.5.  What is different?
+
+```{r}
+ridge_wkflw <- workflow() %>%
+  add_recipe(cann_recipe) %>%
+  add_model(ridge_spec)
+
+ridge_wkflw_2 <- workflow() %>%
+  add_recipe(cann_recipe) %>%
+  add_model(ridge_spec_2)
+
+ridge_wkflw %>% 
+  fit(cann_clean) %>%
+  extract_fit_parsnip() %>%
+  tidy()
+
+ridge_wkflw_2 %>% 
+  fit(cann_clean) %>%
+  extract_fit_parsnip() %>%
+  tidy()
+```
+
+The larger lambda has smaller coefs!
+
+3. Which model do you prefer?
+
+```{r}
+lasso_pred <- lasso_wkflw %>% 
+  fit(cann_clean) %>%
+  predict(cann_clean) %>%
+  pull()
+
+lasso_pred_2 <- lasso_wkflw_2 %>% 
+  fit(cann_clean) %>%
+  predict(cann_clean) %>%
+  pull()
+
+ridge_pred <- ridge_wkflw %>% 
+  fit(cann_clean) %>%
+  predict(cann_clean) %>%
+  pull()
+
+ridge_pred_2 <- ridge_wkflw_2 %>% 
+  fit(cann_clean) %>%
+  predict(cann_clean) %>%
+  pull()
+
+cann_clean <- cann_clean %>%
+  mutate(ridge_pred = ridge_pred,
+         ridge_pred_2 = ridge_pred_2,
+         lasso_pred = lasso_pred,
+         lasso_pred_2 = lasso_pred_2)
+
+rbind(
+  rmse(cann_clean, Rating, lasso_pred),
+  rmse(cann_clean, Rating, lasso_pred_2),
+  rmse(cann_clean, Rating, ridge_pred),
+  rmse(cann_clean, Rating, ridge_pred_2)
+)
+```
+
+I prefer lasso because I like how it brings less important variables all the way to 0 rather then just slightly smaller.
+
+4. (Bonus)  What is the best choice of lambda?
+
+```{r}
+lam_grid <- grid_regular(penalty(), 
+                         levels = 10)
+
+cann_cvs <- vfold_cv(cann_clean, v = 5)
+
+lasso_spec <- linear_reg(penalty = tune(), 
+                         mixture = 1) %>%
+  set_engine("glmnet") %>%
+  set_mode("regression")
+
+wflow_lasso <- workflow() %>%
+  add_model(lasso_spec) %>%
+  add_recipe(
+    recipe(Rating ~ ., data = cann_clean)
+  )
+
+tune_res <- wflow_lasso %>%
+  tune_grid(
+    resamples = cann_cvs,
+    grid = lam_grid
+  )
+
+tune_res %>%
+  collect_metrics() %>%
+  filter(.metric == 'rmse') %>%
+  slice_min(mean)
+```
+
+```{r}
+lam_grid <- grid_regular(penalty(), 
+                         levels = 10)
+
+cann_cvs <- vfold_cv(cann_clean, v = 5)
+
+ridge_spec <- linear_reg(penalty = tune(), 
+                         mixture = 0) %>%
+  set_engine("glmnet") %>%
+  set_mode("regression")
+
+wflow_ridge <- workflow() %>%
+  add_model(ridge_spec) %>%
+  add_recipe(
+    recipe(Rating ~ ., data = cann_clean)
+  )
+
+tune_res <- wflow_ridge %>%
+  tune_grid(
+    resamples = cann_cvs,
+    grid = lam_grid
+  )
+
+tune_res %>%
+  collect_metrics() %>%
+  filter(.metric == 'rmse') %>%
+  slice_min(mean)
+```
+
