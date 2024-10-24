@@ -383,3 +383,68 @@ tune_res %>%
   slice_min(mean)
 ```
 
+# Wed In-class
+
+```{r}
+lasso_spec <- linear_reg(penalty = 0.06, mixture = 1) %>%
+  set_engine("glmnet") %>%
+  set_mode("regression")
+
+lasso_wkflw <- workflow() %>%
+  add_recipe(cann_recipe) %>%
+  add_model(lasso_spec)
+
+lasso_wkflw %>% 
+  fit(cann_clean) %>%
+  extract_fit_parsnip() %>%
+  tidy() %>%
+  filter(estimate != 0)
+```
+
+```{r}
+lam_grid <- grid_regular(penalty(), 
+                         mixture(),
+                         levels = 10)
+
+cann_cvs <- vfold_cv(cann_clean, v = 5)
+
+ridge_spec <- linear_reg(penalty = tune(), 
+                         mixture = tune()) %>%
+  set_engine("glmnet") %>%
+  set_mode("regression")
+
+wflow_ridge <- workflow() %>%
+  add_model(ridge_spec) %>%
+  add_recipe(
+    recipe(Rating ~ ., data = cann_clean)
+  )
+
+tune_res <- wflow_ridge %>%
+  tune_grid(
+    resamples = cann_cvs,
+    grid = lam_grid
+  )
+
+rmse_output <- tune_res %>%
+  collect_metrics() %>%
+  filter(.metric == 'rmse') %>%
+  select(penalty, mixture, mean)
+
+rsqr_output <- tune_res %>%
+  collect_metrics() %>%
+  filter(.metric == 'rsq') %>%
+  select(penalty, mixture, mean)
+
+ggplot(rmse_output) +
+  geom_line(aes(x = penalty, y = mean, color = factor(mixture)))
+
+ggplot(rmse_output) +
+  geom_line(aes(x = mixture, y = mean, color = factor(penalty)))
+
+ggplot(rsqr_output) +
+  geom_line(aes(x = penalty, y = mean, color = factor(mixture)))
+
+ggplot(rsqr_output) +
+  geom_line(aes(x = mixture, y = mean, color = factor(penalty)))
+```
+

@@ -1,0 +1,210 @@
+---
+title: "Variable Selection and Regularization"
+author: "Andrew Kerr"
+format: 
+  html:
+    code-fold: true
+    code-line-numbers: true
+    code-tools: true
+embed-resources: true
+editor: source
+execute:
+  message: false
+---
+
+## Setup
+
+Declare your libraries:
+
+```{r}
+#| label: packages
+#| include: false
+
+library(tidyverse)
+library(tidymodels)
+library(glmnet)
+library(discrim)
+library(rpart)
+library(rpart.plot)
+library(baguette)
+```
+
+```{r}
+#| label: data-load-clean
+
+cann <- read_csv("https://www.dropbox.com/s/s2a1uoiegitupjc/cannabis_full.csv?dl=1")
+
+cann <- cann %>%
+  select(-Strain, -Effects, -Flavor, -Dry, -Mouth)
+
+cann_no_hybrid <- cann %>%
+  filter(Type != "hybrid") %>%
+  drop_na() %>%
+  mutate(Type = factor(Type))
+
+```
+
+# Try it!
+
+Recall: We wanted to predict the `Type` of cannabis from the descriptor words.
+
+Consider only Indica vs. Sativa  (remove Hybrid)
+
+Can you combine **logistic regression** with **LASSO** to tell me which words best separate Indica and Sativa?
+
+```{r}
+logit_mod <- logistic_reg(penalty = tune(), 
+                          mixture = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("glmnet")
+
+lam_grid <- grid_regular(penalty(),
+                         mixture(),
+                         levels = 10)
+
+cann_cvs <- vfold_cv(cann_no_hybrid, v = 5)
+
+wflow_logit <- workflow() %>%
+  add_model(logit_mod) %>%
+  add_recipe(
+    recipe(Type ~ ., data = cann_no_hybrid)
+  )
+
+tune_res <- wflow_logit %>%
+  tune_grid(
+    resamples = cann_cvs,
+    grid = lam_grid
+  )
+
+tune_res %>%
+  collect_metrics() %>%
+  filter(.metric == 'roc_auc') %>%
+  slice_max(mean)
+```
+
+```{r}
+logit_mod <- logistic_reg(penalty = 0.07742637, 
+                          mixture = 0.1111111) %>%
+  set_mode("classification") %>%
+  set_engine("glmnet")
+
+wflow_logit <- workflow() %>%
+  add_model(logit_mod) %>%
+  add_recipe(
+    recipe(Type ~ ., data = cann_no_hybrid)
+  )
+
+tune_res <- wflow_logit %>%
+  fit(cann_no_hybrid)
+
+tune_res %>%
+  extract_fit_parsnip() %>%
+  tidy() %>%
+  filter(estimate != 0)
+
+cann_no_hybrid_res <- cann_no_hybrid %>%
+  bind_cols(predict(tune_res, cann_no_hybrid, type = "prob")) %>%
+  mutate(
+    tree_pred = predict(tune_res, cann_no_hybrid)$.pred_class
+  )
+
+roc_auc_tree <- cann_no_hybrid_res %>%
+  roc_auc(
+    truth = Type,
+    c(.pred_indica)
+    )
+
+precision_tree <- cann_no_hybrid_res %>%
+  precision(
+    truth = Type,
+    estimate = tree_pred
+  )
+
+recall_tree <- cann_no_hybrid_res %>%
+  recall(
+    truth = Type,
+    estimate = tree_pred
+  )
+
+rbind(roc_auc_tree, precision_tree, recall_tree)
+```
+
+How does this compare to what you find with a decision tree?
+
+```{r}
+tree_grid <- grid_regular(cost_complexity(),
+                          tree_depth(),
+                          min_n(), 
+                          levels = 5)
+
+tree_mod <- decision_tree(cost_complexity = tune(),
+                          tree_depth = tune(),
+                          min_n = tune()) %>%
+  set_engine("rpart") %>%
+  set_mode("classification")
+
+tree_wflow <- workflow() %>%
+  add_model(tree_mod) %>% 
+  add_recipe(recipe(Type ~ ., data = cann_no_hybrid))
+
+tree_grid_search <-
+  tune_grid(
+    tree_wflow,
+    resamples = cann_cvs,
+    grid = tree_grid
+  )
+
+tuning_metrics <- tree_grid_search %>% collect_metrics()
+
+tuning_metrics %>%
+  filter(.metric == "roc_auc") %>%
+  slice_max(mean)
+```
+
+```{r}
+tree_mod <- decision_tree(cost_complexity = 1e-10,
+                          tree_depth = 8,
+                          min_n = 30) %>%
+  set_engine("rpart") %>%
+  set_mode("classification")
+
+tree_wflow <- workflow() %>%
+  add_model(tree_mod) %>% 
+  add_recipe(recipe(Type ~ ., data = cann_no_hybrid))
+
+tree_fit <- tree_wflow %>%
+  fit(cann_no_hybrid)
+
+cann_no_hybrid_res <- cann_no_hybrid %>%
+  bind_cols(predict(tree_fit, cann_no_hybrid, type = "prob")) %>%
+  mutate(
+    tree_pred = predict(tree_fit, cann_no_hybrid)$.pred_class
+  )
+
+roc_auc_tree <- cann_no_hybrid_res %>%
+  roc_auc(
+    truth = Type,
+    c(.pred_indica)
+    )
+
+precision_tree <- cann_no_hybrid_res %>%
+  precision(
+    truth = Type,
+    estimate = tree_pred
+  )
+
+recall_tree <- cann_no_hybrid_res %>%
+  recall(
+    truth = Type,
+    estimate = tree_pred
+  )
+
+rbind(roc_auc_tree, precision_tree, recall_tree)
+
+tree_fitted <- tree_fit %>% 
+  pull_workflow_fit()
+
+rpart.plot(tree_fitted$fit)
+```
+
+The tree only wins in precision, but only barely. 
