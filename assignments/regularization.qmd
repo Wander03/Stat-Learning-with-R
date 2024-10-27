@@ -1,0 +1,670 @@
+---
+title: "Lab 5: Variable Selection and Regularization"
+author: "Andrew Kerr"
+format: 
+  html:
+    code-fold: false
+    code-line-numbers: true
+    code-tools: true
+    self-contained: true
+editor: source
+execute: 
+  cache: true
+---
+
+```{r}
+#| label: libraries-r
+#| include: false
+library(tidyverse)
+library(tidymodels)
+library(glmnet)
+library(discrim)
+library(rpart)
+library(rpart.plot)
+library(baguette)
+library(leaps)
+library(kableExtra)
+```
+
+# Dataset: Gene Expression
+
+Technology for measuring gene expression from human blood samples first became generally available to scientists in the 1990s. It was quickly found that this information was extremely powerful for predicting and categorizing diseases in humans, especially cancers.
+
+At the time, it was very costly to process even a single sample. Thus, it was common to have datasets with large numbers of variables (genes) but very small numbers of samples (people). This data format went against all of classical statistics, which tends to assume many samples on a few variables. The field had to adapt accordingly, leading to methods like LASSO Regression.
+
+Historical interlude: This area of study in statistics was called "High Dimension, Low Sample Size". Nowadays, the technology is much cheaper, and we often have very large sample sizes as well as very large variable sizes - another new problem for the early to mid 2000s that we called"Big Data". You can also read the original LASSO paper from 1996 here, if you're interested: https://statweb.stanford.edu/\~tibs/lasso/lasso.pdf. Fun fact: it's the second-most cited paper in all of statistics!
+
+This lab's data is taken from a paper in 1999, which used clustering and classification techniques to classify patients between two types of cancer: acute myeloid leukemia (AML) and acute lymphoblastic leukemia (ALL).
+
+You can read the paper here (although you don't need to for this lab): https://webdocs.cs.ualberta.ca/\~rgreiner/R/OLD-BiCluster/Golub_et_al_1999.pdf
+
+In this lab, we'll see if we can learn more about the genetic drivers of AML and ALL via modern statistical learning techniques.
+
+```{r}
+#| label: data-load
+#| message: false
+#| echo: false
+
+genes <- read_csv(here::here('data', 'genes_cancer_train.csv')) 
+genes_validation <- read_csv(here::here('data', 'genes_cancer_validate.csv'))
+
+genes <- genes %>%
+  mutate(cancer = factor(cancer))
+
+genes_validation <- genes_validation %>%
+  mutate(cancer = factor(cancer))
+```
+
+## Reducing Size of Data
+
+```{r}
+#| label: subsetting-data
+
+set.seed(282)
+
+random_columns <- sample(3:ncol(genes), 
+                         size = 100)
+genes_sub <- genes %>% 
+  select(
+    1, 
+    2, 
+    all_of(random_columns)
+    )
+```
+
+## Functions
+
+```{r}
+#| label: prediction-function
+
+predict_metrics <- function(pred_data, fitted_model) {
+  
+  genes_sub_pred <- pred_data %>%
+  bind_cols(predict(fitted_model, pred_data, type = "prob")) %>%
+  mutate(
+    .pred_cancer = predict(tree_fit, pred_data)$.pred_class
+  ) %>%
+  select(
+    1,
+    2,
+    .pred_ALL,
+    .pred_AML,
+    .pred_cancer
+  )
+
+  accuracy_tree_bag <- genes_sub_pred %>%
+    accuracy(
+      truth = cancer,
+      estimate = .pred_cancer
+    )
+  
+  precision_tree_bag <- genes_sub_pred %>%
+    precision(
+      truth = cancer,
+      estimate = .pred_cancer
+    )
+  
+  recall_tree_bag <- genes_sub_pred %>%
+    recall(
+      truth = cancer,
+      estimate = .pred_cancer
+    )
+  
+  roc_auc_tree_bag <- genes_sub_pred %>%
+    roc_auc(
+      truth = cancer,
+      .pred_ALL
+      )
+
+  gain_capture_tree_bag <- genes_sub_pred %>%
+    gain_capture(
+      truth = cancer,
+      .pred_ALL
+      )
+
+  rbind(accuracy_tree_bag, roc_auc_tree_bag, gain_capture_tree_bag, precision_tree_bag, recall_tree_bag)
+
+}
+```
+
+# Part One: Classification without regularization
+
+#### Q1: Decision Tree
+
+Fit a decision tree to this data. Which genes does it designate as most important for differentiating between ALL and AML cancers? How pure are the nodes?
+
+```{r}
+#| label: tune-decision-tree
+#| warning: false
+
+gene_recipe <- recipe(cancer ~ ., data = genes_sub) %>%
+  update_role(patient, new_role = "id variable")
+
+genes_cvs <- vfold_cv(genes_sub, v = 5)
+
+tree_grid <- grid_regular(cost_complexity(),
+                          tree_depth(),
+                          min_n(), 
+                          levels = 5)
+
+tree_mod_tune <- decision_tree(cost_complexity = tune(),
+                          tree_depth = tune(),
+                          min_n = tune()) %>%
+  set_engine("rpart") %>%
+  set_mode("classification")
+
+tree_wflow_tune <- workflow() %>%
+  add_model(tree_mod_tune) %>% 
+  add_recipe(gene_recipe)
+
+tree_grid_search <-
+  tune_grid(
+    tree_wflow_tune,
+    resamples = genes_cvs,
+    grid = tree_grid,
+    metrics = metric_set(accuracy, roc_auc, precision, recall, gain_capture)
+  )
+
+tree_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  slice_max(mean) %>%
+  kable()
+```
+
+```{r}
+#| label: decision-tree
+
+tree_mod <- decision_tree(cost_complexity = 1e-10,
+                          tree_depth = 4,
+                          min_n = 11) %>%
+  set_engine("rpart") %>%
+  set_mode("classification")
+
+tree_wflow <- workflow() %>%
+  add_model(tree_mod) %>% 
+  add_recipe(gene_recipe)
+
+tree_fit <- tree_wflow %>%
+  fit(genes_sub)
+
+predict_metrics(genes_sub, tree_fit) %>%
+  kable()
+
+rpart.plot(extract_fit_parsnip(tree_fit)$fit, roundint = FALSE)
+```
+
+The most important gene for differentiating is M96326_rna1_at with a 0.8 node 
+purity.
+
+#### Q2: Validation
+
+Use your tree to predict on the validation set. How did it do?
+
+```{r}
+#| label: decision-tree-validation
+
+predict_metrics(genes_validation, tree_fit) %>%
+  kable()
+```
+
+It did not do as well, especially for node purity, but still did fairly well...
+
+#### Q3: Explanation
+
+Give an intuitive explanation for why the above occurred.
+
+That is to say: Your tree should have only one split, so it can't be too overfit. It should also have very good node purity, suggesting good predictive power. But the accuracy in Q2 is not as high as the node purity would suggest. Why is this?
+
+The model did not do as well on the validation data because, although the variable it is using to split might be important, there may be other useful variables that are being overshadowed in the training data.
+
+#### Q4: Random Forest
+
+Now fit a Random Forest to the data. 
+
+```{r}
+#| label: tune-RF
+#| warning: false
+
+rf_grid <- grid_regular(mtry(c(1, ncol(genes_sub) - 2)),
+                        min_n(), 
+                        levels = 5)
+
+rf_mod_tune <- rand_forest(mtry = tune(), 
+                           min_n = tune(),
+                           trees = 10) %>%
+  set_engine("ranger", importance = 'impurity') %>%
+  set_mode("classification")
+
+rf_wflow_tune <- workflow() %>%
+  add_model(rf_mod_tune) %>% 
+  add_recipe(gene_recipe)
+
+rf_grid_search <-
+  tune_grid(
+    rf_wflow_tune,
+    resamples = genes_cvs,
+    grid = rf_grid,
+    metrics = metric_set(accuracy, roc_auc, precision, recall, gain_capture)
+  )
+
+rf_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  slice_max(mean) %>%
+  kable()
+```
+
+```{r}
+#| label: rf
+
+rf_mod <- rand_forest(mtry = 25, 
+                      min_n = 11,
+                      trees = 10) %>%
+  set_engine("ranger", importance = 'impurity') %>%
+  set_mode("classification")
+
+rf_wflow <- workflow() %>%
+  add_model(rf_mod) %>% 
+  add_recipe(gene_recipe)
+
+rf_fit <- rf_wflow %>%
+  fit(genes_sub)
+
+predict_metrics(genes_sub, rf_fit) %>%
+  kable()
+```
+
+#### Q5: Validation
+
+Use your random forest to predict on the validation set. How did it do? 
+
+```{r}
+#| label: rf-validation
+
+predict_metrics(genes_validation, rf_fit) %>%
+  kable()
+```
+
+The random forest model did well!
+
+#### Q6: Explanation
+
+How does this method compare to a single decision tree? Give an explanation for the difference in results.
+
+The random forest model has the same accuracy, precision, and recall as the decision tree, but better roc auc and node purity. The slight increase in predictive power from the RF model is due to its use of multiple trees made of different predictors. Since a single predictor is unable to solely control the outcome of the model like it is in the decision tree, this allows other predictors to influence the outcome allowing to pick up on more complex patterns.
+
+# Part Two: Variable Selection
+
+#### Q7: Stepwise Selection
+
+Use forwards or backwards selection (your choice) to choose the ideal number of variables, up to a maximum of 10. Which genes are chosen?
+
+```{r}
+#| label: ew
+#| warning: false
+
+genes_weird_sub <- genes_sub %>%
+  mutate(
+    cancer = as.integer(cancer)
+  )
+
+models_forward <- regsubsets(cancer ~ ., 
+                     data = genes_weird_sub, 
+                     method = "forward",
+                     nvmax = 10)
+
+models_backward <- regsubsets(cancer ~ ., 
+                     data = genes_weird_sub, 
+                     method = "backward",
+                     nvmax = 10)
+
+vars_forward <- summary(models_forward)$outmat[1,]
+vars_backward <- summary(models_backward)$outmat[1,]
+
+names(vars_forward[vars_forward == "*"])
+names(vars_backward[vars_backward == "*"])
+```
+
+Only 1 gene is chosen for both methods: forward selection is U05259_rna1_at, while backward selection is K03431_cds1_at.
+
+#### Q8: Tuning LASSO
+
+Tune a LASSO regression. Identify the largest `penalty` parameter that doesn't cause you to lose any prediction accuracy.
+
+```{r}
+#| label: tune-LASSO
+#| warning: false
+
+lasso_grid <- grid_regular(penalty(c(-10, 0), 
+                                   trans = log2_trans()), 
+                           levels = 10)
+
+lasso_mod_tune <- logistic_reg(penalty = tune(), 
+                               mixture = 1) %>%
+  set_engine("glmnet") %>%
+  set_mode("classification")
+
+lasso_wflow_tune <- workflow() %>%
+  add_model(lasso_mod_tune) %>% 
+  add_recipe(gene_recipe)
+
+lasso_grid_search <-
+  tune_grid(
+    lasso_wflow_tune,
+    resamples = genes_cvs,
+    grid = lasso_grid,
+    metrics = metric_set(accuracy, roc_auc, gain_capture, precision, recall)
+  )
+
+lasso_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  slice_max(mean) %>%
+  arrange(-penalty) %>%
+  kable()
+```
+
+#### Q9: LASSO Variable Selection
+
+Using the penalty chosen in Q2, fit a final LASSO model on the **full data** (that is, on `genes` not on `genes_sub`). What genes were selected?
+
+```{r}
+#| label: lasso
+
+gene_recipe_full <- recipe(cancer ~ ., data = genes) %>%
+  update_role(patient, new_role = "id variable")
+
+lasso_mod <- logistic_reg(penalty = 0.099212566, 
+                          mixture = 1) %>%
+  set_engine("glmnet") %>%
+  set_mode("classification")
+
+lasso_wflow <- workflow() %>%
+  add_model(lasso_mod) %>% 
+  add_recipe(gene_recipe_full)
+
+lasso_fit <- lasso_wflow %>%
+  fit(genes)
+
+lasso_fit %>%
+  extract_fit_parsnip() %>%
+  tidy() %>%
+  filter(estimate != 0, term != '(Intercept)') %>%
+  select(term) %>%
+  kable()
+```
+
+The genes above were chosen!
+
+# Part Three: Reducing Variance of Coefficients
+
+#### Q10: Ordinary Logistic Regression
+
+Randomly divide the observations in the dataset (in `genes_sub`) in half. Fit a logistic regression on the with no penalty term to each half.
+
+```{r}
+#| label: split-genes_sub
+
+genes_sub_1 <- genes_sub %>% 
+  slice_sample(prop = 0.5)
+
+genes_sub_2 <- genes_sub %>% 
+  anti_join(genes_sub_1, by = 'patient')
+```
+
+```{r}
+#| label: logreg
+
+gene_recipe_half_1 <- recipe(cancer ~ ., data = genes_sub_1) %>%
+  update_role(patient, new_role = "id variable")
+
+gene_recipe_half_2 <- recipe(cancer ~ ., data = genes_sub_2) %>%
+  update_role(patient, new_role = "id variable")
+
+logreg_mod <- logistic_reg() %>%
+  set_engine("glm") %>%
+  set_mode("classification")
+
+logreg_mod_wflow_1 <- workflow() %>%
+  add_model(logreg_mod) %>% 
+  add_recipe(gene_recipe_half_1)
+
+logreg_fit_1 <- logreg_mod_wflow_1 %>%
+  fit(genes_sub_1)
+
+logreg_coef_1 <- logreg_fit_1 %>%
+  extract_fit_parsnip() %>%
+  tidy() %>%
+  filter(term != '(Intercept)') %>%
+  select(term, estimate) %>%
+  slice_head(n = 5) 
+
+logreg_mod_wflow_2 <- workflow() %>%
+  add_model(logreg_mod) %>% 
+  add_recipe(gene_recipe_half_2)
+
+logreg_fit_2 <- logreg_mod_wflow_2 %>%
+  fit(genes_sub_2)
+
+logreg_coef_2 <- logreg_fit_2 %>%
+  extract_fit_parsnip() %>%
+  tidy() %>%
+  filter(term != '(Intercept)') %>%
+  select(term, estimate) %>%
+  slice_head(n = 5)
+```
+
+Report the estimates for the first five listed predictors. How different were they between the two subsamples of the dataset?
+
+```{r}
+#|label: logreg-output
+
+logreg_coefs <- logreg_coef_1 %>%
+  merge(logreg_coef_2, by = 'term', suffixes = c("_1","_2")) %>%
+  mutate(difference = estimate_1 - estimate_2)
+
+logreg_coefs %>%
+  kable()
+```
+
+The coefficient estimates are not that different between the two models for the first five predictors.
+
+#### Q11: Ridge regression - tuning.
+
+Tune a logistic regression with ridge penalty on `genes_sub`. Once again, choose the largest penalty that does not noticeably decrease the accuracy.
+
+```{r}
+#| label: tune-ridge
+#| warning: false
+
+ridge_grid <- grid_regular(penalty(c(-10, 10), 
+                                   trans = log2_trans()), 
+                           levels = 10)
+
+ridge_mod_tune <- logistic_reg(penalty = tune(), 
+                               mixture = 0) %>%
+  set_engine("glmnet") %>%
+  set_mode("classification")
+
+ridge_wflow_tune <- workflow() %>%
+  add_model(ridge_mod_tune) %>% 
+  add_recipe(gene_recipe)
+
+ridge_grid_search <-
+  tune_grid(
+    ridge_wflow_tune,
+    resamples = genes_cvs,
+    grid = ridge_grid,
+    metrics = metric_set(accuracy, roc_auc, gain_capture, precision, recall)
+  )
+
+ridge_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  slice_max(mean) %>%
+  arrange(-penalty) %>%
+  kable()
+```
+
+#### Q12: Comparison
+
+Fit a logistic regression with the penalty selected in Q2 on the two random halves of the dataset that you created in Q1.
+
+```{r}
+#| label: ridge
+#| warning: false
+
+ridge_mod <- logistic_reg(penalty = 2.1601194778, 
+                          mixture = 0) %>%
+  set_engine("glmnet") %>%
+  set_mode("classification")
+
+ridge_mod_wflow_1 <- workflow() %>%
+  add_model(ridge_mod) %>% 
+  add_recipe(gene_recipe_half_1)
+
+ridge_fit_1 <- ridge_mod_wflow_1 %>%
+  fit(genes_sub_1)
+
+ridge_coef_1 <- ridge_fit_1 %>%
+  extract_fit_parsnip() %>%
+  tidy() %>%
+  filter(term != '(Intercept)') %>%
+  select(term, estimate) %>%
+  slice_head(n = 5) 
+
+ridge_mod_wflow_2 <- workflow() %>%
+  add_model(ridge_mod) %>% 
+  add_recipe(gene_recipe_half_2)
+
+ridge_fit_2 <- ridge_mod_wflow_2 %>%
+  fit(genes_sub_2)
+
+ridge_coef_2 <- ridge_fit_2 %>%
+  extract_fit_parsnip() %>%
+  tidy() %>%
+  filter(term != '(Intercept)') %>%
+  select(term, estimate) %>%
+  slice_head(n = 5)
+
+ridge_coefs <- ridge_coef_1 %>%
+  merge(ridge_coef_2, by = 'term', suffixes = c("_1","_2")) %>%
+  mutate(difference = estimate_1 - estimate_2)
+```
+
+Compare the estimates of the first five variables. How different were they?
+
+```{r}
+#| label: OLR-v-ridge
+
+logreg_coefs %>%
+  merge(ridge_coefs, by = 'term', suffixes = c("_logreg","_ridge")) %>%
+  group_by(term) %>%
+  summarise(avg_logreg = mean(estimate_1_logreg + estimate_2_logreg),
+            avg_ridge = mean(estimate_1_ridge + estimate_2_ridge),
+            difference = avg_logreg - avg_ridge) %>%
+  kable()
+```
+
+The estimates for the ridge models are much smaller than those for the logistic regression models. 
+
+#### Q13: Explanation
+
+In your own words, give an explanation for what we saw in Q1 versus in Q3. Why were the results similar or different?
+
+Since the estimates between the two types models were different, this suggests that the ridge regression is adjusting for variance in the estimates by shrinking these first five predictors. In this case, this suggests that the first five predictors are not very important in predicting cancer since they have been shrunk towards zero, and that they may have been overly influential in the logistic regression model.
+
+# Part Four: A final model
+
+#### Q14: Tuning
+
+Using `genes_sub`, tune both the penalty and the mixture term. Choose the penalty that is largest without losing accuracy.
+
+```{r}
+#| label: tune-all
+#| warning: false
+
+net_grid <- grid_regular(penalty(c(-10, 0), 
+                                   trans = log2_trans()),
+                           mixture(),
+                           levels = 10)
+
+net_mod_tune <- logistic_reg(penalty = tune(), 
+                               mixture = tune()) %>%
+  set_engine("glmnet") %>%
+  set_mode("classification")
+
+net_wflow_tune <- workflow() %>%
+  add_model(net_mod_tune) %>% 
+  add_recipe(gene_recipe)
+
+net_grid_search <-
+  tune_grid(
+    net_wflow_tune,
+    resamples = genes_cvs,
+    grid = net_grid,
+    metrics = metric_set(accuracy, roc_auc, gain_capture, precision, recall)
+  )
+
+net_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  slice_max(mean) %>%
+  arrange(-penalty) %>%
+  kable()
+```
+
+#### Q15: Mixture Parameter
+
+Interpret the selected `mixture` parameter in words.
+
+With a mixture of 0.67, we are weighting our LASSO penalty by 0.67 and our Ridge penalty by 0.33.
+
+#### Q16: Conclusion
+
+Using the parameters you selected above, fit your model to the **full dataset**.
+
+```{r}
+#| label: all
+#| warning: false
+
+net_mod <- logistic_reg(penalty = 0.09921257, 
+                          mixture = 0.6666667) %>%
+  set_engine("glmnet") %>%
+  set_mode("classification")
+
+net_wflow <- workflow() %>%
+  add_model(net_mod) %>% 
+  add_recipe(gene_recipe_full)
+
+net_fit <- net_wflow %>%
+  fit(genes)
+```
+
+How many genes were selected? Which seem to be most important?
+
+```{r}
+#| label: all-coefs
+
+net_fit %>%
+  extract_fit_parsnip() %>%
+  tidy() %>%
+  filter(estimate != 0, term != '(Intercept)') %>%
+  arrange(-abs(estimate)) %>%
+  select(-penalty) %>%
+  kable()
+```
+
+38 genes were selected, with Z24727_at, Z29067_at, and M14636_at seemingly the thre most important.
+
+Report the performance of the model on the validation set.
+
+```{r}
+#| label: all-validation
+
+predict_metrics(genes_validation, net_fit) %>%
+  kable()
+```
+
+The final model has the same accuracy, precision, and recall as the decision tree and RF models, the same gain capture as RF (which is greater than that from the decision tree), and better roc auc then both models. With a greater recall than precision, we can say that this model prioritizes detecting true positive values over minimizing false negatives (it will categorize more patients as having AML at the cost of some incorrect classifications).
