@@ -29,3 +29,4 @@ rpart.plot
 baguette
 ranger
 leaps
+kableExtra
