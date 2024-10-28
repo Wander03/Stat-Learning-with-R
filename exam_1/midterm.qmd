@@ -21,6 +21,7 @@ library(here)
 library(janitor)
 library(themis)
 library(leaps)
+library(dataMaid)
 ```
 
 # Data
@@ -58,6 +59,8 @@ mvb_test <- mvb_test %>%
   mutate(
     across(.cols = any_of(factor_cols), .fns = ~factor(.))
   )
+
+# makeDataReport(mvb_train, output = 'html', replace = T)
 ```
 
 # Functions
@@ -423,6 +426,26 @@ results_knn_k_3 %>%
   slice_max(ROC_AUC, n = 3)
 ```
 
+```{r}
+#| label: KNN-fit
+
+knn_mod <- nearest_neighbor(neighbors = 26) %>%
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+knn_wflow <- workflow() %>%
+  add_model(knn_mod) %>% 
+  add_recipe(recipe_best_subset %>% step_normalize(all_numeric_predictors()))
+
+knn_fit <- knn_wflow %>%
+  fit(mvb_train)
+
+predict_metrics(mvb_train, knn_fit)
+
+predict_metrics(full_df %>% inner_join(mvb_test[,-1]), knn_fit)
+```
+
+
 ## REMOVE LATER
 
 ```{r}
@@ -431,8 +454,9 @@ full_df <- read.csv(here('data', 'midterm', 'mountains_vs_beaches_preferences.cs
 full_df <- full_df %>%
   mutate(
     across(.cols = all_of(factor_cols), .fns = ~factor(.))
-  )
+  ) %>%
+  select(-preferred_activities)
 
-full_df %>% inner_join(mvb_train)
+identical(full_df %>% inner_join(mvb_test[,-1], by = colnames(mvb_test[,-1])) %>% select(-preference), mvb_test[,-1])
 ```
 
