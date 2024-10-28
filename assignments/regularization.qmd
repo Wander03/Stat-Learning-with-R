@@ -82,7 +82,7 @@ predict_metrics <- function(pred_data, fitted_model) {
   genes_sub_pred <- pred_data %>%
   bind_cols(predict(fitted_model, pred_data, type = "prob")) %>%
   mutate(
-    .pred_cancer = predict(tree_fit, pred_data)$.pred_class
+    .pred_cancer = predict(fitted_model, pred_data)$.pred_class
   ) %>%
   select(
     1,
@@ -307,7 +307,8 @@ Use forwards or backwards selection (your choice) to choose the ideal number of 
 genes_weird_sub <- genes_sub %>%
   mutate(
     cancer = as.integer(cancer)
-  )
+  ) %>%
+  select(-patient)
 
 models_forward <- regsubsets(cancer ~ ., 
                      data = genes_weird_sub, 
