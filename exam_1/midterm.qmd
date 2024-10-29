@@ -8,6 +8,8 @@ format:
     code-tools: true
 embed-resources: true
 editor: source
+execute: 
+  cache: true
 ---
 
 ```{r}
@@ -208,11 +210,11 @@ recipe_full_norm <- recipe_full %>% step_normalize(all_numeric_predictors())
 
 recipe_full_upsample <- recipe(preference ~ ., data = mvb_train) %>%
     update_role(id_num, new_role = "id variable") %>%
-    step_upsample(preference)
+    step_upsample(preference, seed = 123)
 
 recipe_full_downsample <- recipe(preference ~ ., data = mvb_train) %>%
     update_role(id_num, new_role = "id variable") %>%
-    step_downsample(preference)
+    step_downsample(preference, seed = 123)
 ```
 
 ## Recipe Tuning
@@ -228,7 +230,7 @@ interaction_data <- model.matrix(~ .^2, data = mvb_train[,c(-1,-14)])
 # Convert back to a data frame (remove the intercept column if present)
 interaction_data <- cbind(mvb_train[,14], as.data.frame(interaction_data[,-1]))
 
-# The above 2 lines of code are origionally generated from ChatGPT
+# The above 2 lines of code are originally generated from ChatGPT
 
 ################################################################################
 
@@ -318,6 +320,9 @@ recipe_best_subset_norm <- recipe_best_subset %>%
 test_recipes <- list(full = recipe_full_norm, 
                      best_subset = recipe_best_subset_norm,
                      best_forward = recipe_forward_norm)
+
+test_recipes_plus <- test_recipes %>%
+  append(list(recipe_full_upsample = recipe_full_upsample %>% step_normalize(all_numeric_predictors())))
 ```
 
 ## Cross Validation
@@ -676,8 +681,8 @@ importance(ranger_fit) %>%
 #| lablel: RF-tune-downsample
 
 rf_down_grid <- grid_regular(mtry(c(1, ncol(mvb_train) - 2)),
-                        min_n(), 
-                        levels = 10)
+                             min_n(),
+                             levels = 10)
 
 rf_down_mod_tune <- rand_forest(mtry = tune(), 
                            min_n = tune(),
@@ -750,6 +755,72 @@ rf_down_grid_search %>%
     theme_bw()
 ```
 
+## Decision Tree
+
+```{r}
+#| label: dc-tune
+
+tree_grid <- grid_regular(cost_complexity(),
+                          tree_depth(),
+                          min_n(), 
+                          levels = 5)
+
+tree_mod_tune <- decision_tree(cost_complexity = tune(),
+                               tree_depth = tune(),
+                               min_n = tune()) %>%
+  set_engine("rpart") %>%
+  set_mode("classification")
+
+tree_wflow_tune <- workflow() %>%
+  add_model(tree_mod_tune) %>% 
+  add_recipe(recipe_full)
+
+tree_grid_search <-
+  tune_grid(
+    tree_wflow_tune,
+    resamples = mvb_cvs,
+    grid = tree_grid,
+    metrics = metric_set(accuracy, roc_auc, precision, recall, gain_capture)
+  )
+
+tree_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  slice_max(mean, n = 5)
+```
+
+```{r}
+#| label: dc-tune-2
+
+tree_grid <- grid_regular(cost_complexity(c(-20, -9)),
+                          tree_depth(c(10, 30)),
+                          min_n(), 
+                          levels = 10)
+
+tree_mod_tune <- decision_tree(cost_complexity = tune(),
+                               tree_depth = tune(),
+                               min_n = tune()) %>%
+  set_engine("rpart") %>%
+  set_mode("classification")
+
+tree_wflow_tune <- workflow() %>%
+  add_model(tree_mod_tune) %>% 
+  add_recipe(recipe_best_subset)
+
+tree_grid_search <-
+  tune_grid(
+    tree_wflow_tune,
+    resamples = mvb_cvs,
+    grid = tree_grid,
+    metrics = metric_set(accuracy, roc_auc, precision, recall, gain_capture)
+  )
+
+tree_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  slice_max(mean, n = 5)
+```
+
 ## Logistic Regression
 
 ```{r}
@@ -776,17 +847,76 @@ logreg_fit %>%
 #| label: KNN-tune
 
 k_grid <- grid_regular(neighbors(c(1,100)), 
+                       levels = 101)
+
+knn_mod_tune <- nearest_neighbor(neighbors = tune()) %>%
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+results_knn_k <- list_rbind(map2(test_recipes_plus, names(test_recipes_plus), ~find_k(k_grid, mvb_cvs, knn_mod_tune, .x, .y)))
+
+results_knn_k %>%
+  slice_max(ROC_AUC, by = Recipe, n = 3)
+
+results_knn_k %>%
+  ggplot() +
+  geom_line(aes(x = k, y = ROC_AUC, color = Recipe)) +
+  theme_bw()
+```
+
+```{r}
+k_grid <- grid_regular(neighbors(c(1,10000)), 
+                       levels = 101)
+
+knn_mod_tune <- nearest_neighbor(neighbors = tune()) %>%
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+results_knn_k_2 <- find_k(k_grid, mvb_cvs, knn_mod_tune, recipe_forward_norm, 'forward')
+
+results_knn_k_2 %>%
+  slice_max(ROC_AUC, n = 5)
+
+results_knn_k_2 %>%
+  ggplot() +
+  geom_line(aes(x = k, y = ROC_AUC)) +
+  theme_bw()
+```
+
+```{r}
+k_grid <- grid_regular(neighbors(c(1000,10000)), 
                        levels = 10)
 
 knn_mod_tune <- nearest_neighbor(neighbors = tune()) %>%
   set_engine("kknn") %>%
   set_mode("classification")
 
-results_knn_k <- list_rbind(map2(test_recipes, names(test_recipes), ~find_k(k_grid, mvb_cvs, knn_mod_tune, .x, .y)))
+results_knn_k <- list_rbind(map2(test_recipes_plus[1], names(test_recipes_plus[1]), ~find_k(k_grid, mvb_cvs, knn_mod_tune, .x, .y)))
 
 results_knn_k %>%
-  slice_max(ROC_AUC, by = Recipe, n = 3)
+  slice_max(ROC_AUC, n = 3)
+
+results_knn_k %>%
+  ggplot() +
+  geom_line(aes(x = k, y = ROC_AUC, color = Recipe)) +
+  theme_bw()
 ```
+
+```{r}
+knn_mod <- nearest_neighbor(neighbors = 7000) %>%
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+knn_wflow <- workflow() %>%
+  add_model(knn_mod) %>% 
+  add_recipe(recipe_forward_norm)
+
+knn_fit <- knn_wflow %>%
+  fit(mvb_train)
+
+predict_metrics(inner_join(mvb_test[,-1], full_df) %>% mutate(id_num = 1), knn_fit)
+```
+
 
 ```{r}
 #| label: KNN-tune-2
