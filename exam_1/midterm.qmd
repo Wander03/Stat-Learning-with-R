@@ -21,6 +21,8 @@ library(here)
 library(janitor)
 library(themis)
 library(leaps)
+library(discrim)
+library(ranger)
 library(dataMaid)
 ```
 
@@ -151,6 +153,47 @@ find_k <- function(k_grid, data_cv, mod, rec, rec_name) {
 }
 ```
 
+```{r}
+#| label: model-fit-function
+
+fit_model <- function(data, data_cv, mod, rec, rec_name) {
+  
+  rec_wflow <- workflow() %>%
+    add_recipe(rec) %>%
+    add_model(mod)
+  
+  rec_fit <- rec_wflow %>% fit(data)
+  rec_fit_cv <- rec_wflow %>% fit_resamples(data_cv)
+  
+  roc_auc <- collect_metrics(rec_fit_cv) %>% filter(.metric == 'roc_auc') %>% pull(mean)
+
+  pred_output <- data %>%
+    mutate(predicted_response = predict(rec_fit, .)$.pred_class) 
+  
+  conf_matrix <- pred_output %>%
+    conf_mat(truth = preference, estimate = predicted_response) %>%
+    tidy() %>%
+    pivot_wider(names_from = name, values_from = value)
+  
+  tp <- conf_matrix$cell_1_1[1]
+  fp <- conf_matrix$cell_1_2[1]
+  fn <- conf_matrix$cell_2_1[1]
+  tn <- conf_matrix$cell_2_2[1]
+
+  data.frame(
+    Recipe = rec_name,
+    ROC_AUC = roc_auc,
+    TN = tn,
+    FP = fp,
+    FN = fn,
+    TP = tp,
+    Precision = precision(pred_output, truth = preference, estimate = predicted_response)$.estimate,
+    Recall = recall(pred_output, truth = preference, estimate = predicted_response)$.estimate
+  )
+  
+}
+```
+
 # Modeling
 
 ## Starting Recipes
@@ -160,6 +203,8 @@ find_k <- function(k_grid, data_cv, mod, rec, rec_name) {
 
 recipe_full <- recipe(preference ~ ., data = mvb_train) %>%
     update_role(id_num, new_role = "id variable")
+
+recipe_full_norm <- recipe_full %>% step_normalize(all_numeric_predictors())
 
 recipe_full_upsample <- recipe(preference ~ ., data = mvb_train) %>%
     update_role(id_num, new_role = "id variable") %>%
@@ -174,6 +219,58 @@ recipe_full_downsample <- recipe(preference ~ ., data = mvb_train) %>%
 
 ```{r}
 #| lable: variable-selection
+
+################################################################################
+
+# Create all pairwise interaction terms
+interaction_data <- model.matrix(~ .^2, data = mvb_train[,c(-1,-14)])
+
+# Convert back to a data frame (remove the intercept column if present)
+interaction_data <- cbind(mvb_train[,14], as.data.frame(interaction_data[,-1]))
+
+# The above 2 lines of code are origionally generated from ChatGPT
+
+################################################################################
+
+models_forward <- regsubsets(preference ~ ., 
+                             data = interaction_data, 
+                             method = "forward", 
+                             nvmax = 100)
+
+forward_bics <- tibble(bic = summary(models_forward)$bic, 
+                    model = seq(from = 1, 
+                                to = 100, 
+                                by = 1
+                                )
+                    )
+
+min_bic <- slice_min(forward_bics, order_by = bic) %>%
+  pull(model)
+
+best_forward <- summary(models_forward)$outmat[min_bic, ]
+names(best_forward[best_forward == "*"])
+
+################################################################################
+
+models_backward <- regsubsets(preference ~ ., 
+                             data = interaction_data, 
+                             method = "backward", 
+                             nvmax = 100)
+
+backward_bics <- tibble(bic = summary(models_backward)$bic, 
+                    model = seq(from = 1, 
+                                to = 100, 
+                                by = 1
+                                )
+                    )
+
+min_bic <- slice_min(backward_bics, order_by = bic) %>%
+  pull(model)
+
+best_backward <- summary(models_backward)$outmat[min_bic, ]
+names(best_backward[best_backward == "*"])
+
+################################################################################
 
 models_subset <- regsubsets(preference ~ ., 
                      data = mvb_train[,-1], 
@@ -193,10 +290,34 @@ min_bic <- slice_min(subset_bics, order_by = bic) %>%
 best_subset <- summary(models_subset)$outmat[min_bic, ]
 names(best_subset[best_subset == "*"])
 
+################################################################################
+
+recipe_forward <- recipe(preference ~ 
+                           proximity_to_mountains + 
+                           proximity_to_beaches +
+                           gender +
+                           education_level,
+                           data = mvb_train) %>%
+  step_interact(terms = ~gender:education_level)
+
+recipe_forward_norm <- recipe_forward %>% 
+  step_normalize(all_numeric_predictors())
+
 recipe_best_subset <- recipe(preference ~ 
                                proximity_to_mountains + 
                                proximity_to_beaches, 
                              data = mvb_train)
+
+recipe_best_subset_norm <- recipe_best_subset %>% 
+  step_normalize(all_numeric_predictors())
+```
+
+```{r}
+#| label: recipe-list
+
+test_recipes <- list(full = recipe_full_norm, 
+                     best_subset = recipe_best_subset_norm,
+                     best_forward = recipe_forward_norm)
 ```
 
 ## Cross Validation
@@ -210,6 +331,7 @@ mvb_cvs <- vfold_cv(mvb_train, v = 10)
 ```
 
 ## Random Forest Model
+### Full Model
 
 ```{r}
 #| lablel: RF-tune-full
@@ -239,22 +361,100 @@ rf_grid_search <-
 rf_grid_search %>% 
   collect_metrics() %>%
   filter(.metric == "roc_auc") %>%
-  slice_max(mean)
+  slice_max(mean, n = 5)
 
 rf_grid_search %>% 
   collect_metrics() %>%
   filter(.metric == "roc_auc", mean > 0.8) %>%
   ggplot() +
     geom_line(aes(x = min_n, y = mean, color = factor(mtry))) +
-    geom_hline(yintercept = .84, color = 'firebrick', linetype = 'dashed') +
+    geom_hline(yintercept = .83, color = 'firebrick', linetype = 'dashed') +
+    theme_bw()
+```
+
+```{r}
+#| lablel: RF-tune-full-2
+
+rf_grid <- grid_regular(mtry(c(6, 12)),
+                        min_n(c(15, 60)), 
+                        levels = 10)
+
+rf_mod_tune <- rand_forest(mtry = tune(), 
+                           min_n = tune(),
+                           trees = 10) %>%
+  set_engine("ranger", importance = 'impurity') %>%
+  set_mode("classification")
+
+rf_wflow_tune <- workflow() %>%
+  add_model(rf_mod_tune) %>% 
+  add_recipe(recipe_full)
+
+rf_grid_search <-
+  tune_grid(
+    rf_wflow_tune,
+    resamples = mvb_cvs,
+    grid = rf_grid,
+    metrics = metric_set(accuracy, roc_auc, precision, recall, gain_capture)
+  )
+
+rf_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  slice_max(mean, n = 5)
+
+rf_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "roc_auc", mean > 0.8) %>%
+  ggplot() +
+    geom_line(aes(x = min_n, y = mean, color = factor(mtry))) +
+    geom_hline(yintercept = .83, color = 'firebrick', linetype = 'dashed') +
+    theme_bw()
+```
+
+```{r}
+#| lablel: RF-tune-full-3
+
+rf_grid <- grid_regular(mtry(c(7, 12)),
+                        min_n(c(35, 60)), 
+                        levels = 25)
+
+rf_mod_tune <- rand_forest(mtry = tune(), 
+                           min_n = tune(),
+                           trees = 10) %>%
+  set_engine("ranger", importance = 'impurity') %>%
+  set_mode("classification")
+
+rf_wflow_tune <- workflow() %>%
+  add_model(rf_mod_tune) %>% 
+  add_recipe(recipe_full)
+
+rf_grid_search <-
+  tune_grid(
+    rf_wflow_tune,
+    resamples = mvb_cvs,
+    grid = rf_grid,
+    metrics = metric_set(accuracy, roc_auc, precision, recall, gain_capture)
+  )
+
+rf_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  slice_max(mean, n = 5)
+
+rf_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "roc_auc", mean > 0.83) %>%
+  ggplot() +
+    geom_line(aes(x = min_n, y = mean, color = factor(mtry))) +
+    geom_hline(yintercept = .85, color = 'firebrick', linetype = 'dashed') +
     theme_bw()
 ```
 
 ```{r}
 #| label: RF-fitted
 
-rf_mod <- rand_forest(mtry = 12, 
-                      min_n = 31,
+rf_mod <- rand_forest(mtry = 8, 
+                      min_n = 39,
                       trees = 10) %>%
   set_engine("ranger", importance = 'impurity') %>%
   set_mode("classification")
@@ -264,9 +464,9 @@ rf_wflow <- workflow() %>%
   add_recipe(recipe_full)
 
 rf_fit <- rf_wflow %>%
-  fit(mvb_train[,-1])
+  fit(mvb_train)
 
-predict_metrics(full_df %>% inner_join(mvb_test[,-1]), rf_fit)
+predict_metrics(inner_join(mvb_test, full_df), rf_fit)
 
 rf_tree_fit_extracted <- rf_fit %>%
   extract_fit_parsnip()
@@ -285,11 +485,13 @@ importance(ranger_fit) %>%
   )
 ```
 
+### Full Upsampled Model
+
 ```{r}
 #| lablel: RF-tune-upsample
 
 rf_up_grid <- grid_regular(mtry(c(1, ncol(mvb_train) - 2)),
-                        min_n(), 
+                        min_n(),
                         levels = 10)
 
 rf_up_mod_tune <- rand_forest(mtry = tune(), 
@@ -312,12 +514,163 @@ rf_up_grid_search <-
 
 rf_up_grid_search %>% 
   collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  slice_max(mean, n = 3)
+
+rf_up_grid_search %>% 
+  collect_metrics() %>%
   filter(.metric == "roc_auc", mean > 0.82) %>%
   ggplot() +
     geom_line(aes(x = min_n, y = mean, color = factor(mtry))) +
     geom_hline(yintercept = .84, color = 'firebrick', linetype = 'dashed') +
     theme_bw()
 ```
+
+```{r}
+#| lablel: RF-tune-upsample-2
+
+rf_up_grid <- grid_regular(mtry(c(3, 10)),
+                        min_n(c(25, 90)), 
+                        levels = 10)
+
+rf_up_mod_tune <- rand_forest(mtry = tune(), 
+                           min_n = tune(),
+                           trees = 10) %>%
+  set_engine("ranger", importance = 'impurity') %>%
+  set_mode("classification")
+
+rf_up_wflow_tune <- workflow() %>%
+  add_model(rf_up_mod_tune) %>% 
+  add_recipe(recipe_full_upsample)
+
+rf_up_grid_search <-
+  tune_grid(
+    rf_up_wflow_tune,
+    resamples = mvb_cvs,
+    grid = rf_up_grid,
+    metrics = metric_set(accuracy, roc_auc, precision, recall, gain_capture)
+  )
+
+rf_up_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  slice_max(mean, n = 3)
+
+rf_up_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "roc_auc", mean > 0.82) %>%
+  ggplot() +
+    geom_line(aes(x = min_n, y = mean, color = factor(mtry))) +
+    geom_hline(yintercept = .84, color = 'firebrick', linetype = 'dashed') +
+    theme_bw()
+```
+
+```{r}
+#| lablel: RF-tune-upsample-3
+
+rf_up_grid <- grid_regular(mtry(c(5, 11)),
+                        min_n(c(65, 80)), 
+                        levels = 25)
+
+rf_up_mod_tune <- rand_forest(mtry = tune(), 
+                           min_n = tune(),
+                           trees = 10) %>%
+  set_engine("ranger", importance = 'impurity') %>%
+  set_mode("classification")
+
+rf_up_wflow_tune <- workflow() %>%
+  add_model(rf_up_mod_tune) %>% 
+  add_recipe(recipe_full_upsample)
+
+rf_up_grid_search <-
+  tune_grid(
+    rf_up_wflow_tune,
+    resamples = mvb_cvs,
+    grid = rf_up_grid,
+    metrics = metric_set(accuracy, roc_auc, precision, recall, gain_capture)
+  )
+
+rf_up_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  slice_max(mean, n = 3)
+
+rf_up_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "roc_auc", mean > 0.82) %>%
+  ggplot() +
+    geom_line(aes(x = min_n, y = mean, color = factor(mtry))) +
+    geom_hline(yintercept = .84, color = 'firebrick', linetype = 'dashed') +
+    theme_bw()
+```
+
+```{r}
+#| lablel: RF-tune-upsample-trees
+
+# rf_up_grid <- data.frame(trees = c(10, 100, 1000))
+# rf_up_grid <- data.frame(trees = c(900, 1000, 1100))
+rf_up_grid <- data.frame(trees = c(1100, 1200, 1300))
+
+rf_up_mod_tune <- rand_forest(mtry = 6, 
+                           min_n = 67,
+                           trees = tune()) %>%
+  set_engine("ranger", importance = 'impurity') %>%
+  set_mode("classification")
+
+rf_up_wflow_tune <- workflow() %>%
+  add_model(rf_up_mod_tune) %>% 
+  add_recipe(recipe_full_upsample)
+
+rf_up_grid_search <-
+  tune_grid(
+    rf_up_wflow_tune,
+    resamples = mvb_cvs,
+    grid = rf_up_grid,
+    metrics = metric_set(accuracy, roc_auc, precision, recall, gain_capture)
+  )
+
+rf_up_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  slice_max(mean, n = 3)
+```
+
+```{r}
+#| label: RF-upsample-fitted
+
+rf_mod <- rand_forest(mtry = 6, 
+                      min_n = 67,
+                      trees = 1200) %>%
+  set_engine("ranger", importance = 'impurity') %>%
+  set_mode("classification")
+
+rf_wflow <- workflow() %>%
+  add_model(rf_mod) %>% 
+  add_recipe(recipe_full_upsample)
+
+rf_fit <- rf_wflow %>%
+  fit(mvb_train)
+
+predict_metrics(inner_join(mvb_test, full_df), rf_fit)
+
+rf_tree_fit_extracted <- rf_fit %>%
+  extract_fit_parsnip()
+
+ranger_fit <- rf_tree_fit_extracted$fit
+
+importance(ranger_fit) %>%
+  data.frame(Feature = names(.), Importance = .) %>%
+  ggplot(aes(x = Importance, y = reorder(Feature, -Importance))) +
+  geom_col(fill = 'firebrick') +
+  theme_bw() +
+  labs(
+    x = 'Variable Importance',
+    y = 'Features',
+    title = 'Random Forest Variable Importance'
+  )
+```
+
+### Full Downsampled Model
 
 ```{r}
 #| lablel: RF-tune-downsample
@@ -346,6 +699,11 @@ rf_down_grid_search <-
 
 rf_down_grid_search %>% 
   collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  slice_max(mean, n = 5)
+
+rf_down_grid_search %>% 
+  collect_metrics() %>%
   filter(.metric == "roc_auc", mean > 0.82) %>%
   ggplot() +
     geom_line(aes(x = min_n, y = mean, color = factor(mtry))) +
@@ -353,10 +711,49 @@ rf_down_grid_search %>%
     theme_bw()
 ```
 
+```{r}
+#| lablel: RF-tune-downsample-2
+
+rf_down_grid <- grid_regular(mtry(c(4, 9)),
+                        min_n(c(30, 60)), 
+                        levels = 10)
+
+rf_down_mod_tune <- rand_forest(mtry = tune(), 
+                           min_n = tune(),
+                           trees = 10) %>%
+  set_engine("ranger", importance = 'impurity') %>%
+  set_mode("classification")
+
+rf_down_wflow_tune <- workflow() %>%
+  add_model(rf_down_mod_tune) %>% 
+  add_recipe(recipe_full_downsample)
+
+rf_down_grid_search <-
+  tune_grid(
+    rf_down_wflow_tune,
+    resamples = mvb_cvs,
+    grid = rf_down_grid,
+    metrics = metric_set(accuracy, roc_auc, precision, recall, gain_capture)
+  )
+
+rf_down_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  slice_max(mean, n = 5)
+
+rf_down_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "roc_auc", mean > 0.82) %>%
+  ggplot() +
+    geom_line(aes(x = min_n, y = mean, color = factor(mtry))) +
+    geom_hline(yintercept = .85, color = 'firebrick', linetype = 'dashed') +
+    theme_bw()
+```
+
 ## Logistic Regression
 
 ```{r}
-#| label: logreg
+#| label: logreg-fit
 
 logreg_mod <- logistic_reg() %>%
   set_engine("glm") %>%
@@ -364,7 +761,7 @@ logreg_mod <- logistic_reg() %>%
 
 logreg_mod_wflow <- workflow() %>%
   add_model(logreg_mod) %>% 
-  add_recipe(recipe_full)
+  add_recipe(recipe_best_subset_norm)
 
 logreg_fit <- logreg_mod_wflow %>%
   fit_resamples(mvb_cvs)
@@ -376,10 +773,7 @@ logreg_fit %>%
 ## KNN
 
 ```{r}
-#| label: KNN-tune-1
-
-test_recipes <- list(full = recipe_full, 
-                     best_subset = recipe_best_subset)
+#| label: KNN-tune
 
 k_grid <- grid_regular(neighbors(c(1,100)), 
                        levels = 10)
@@ -404,23 +798,23 @@ knn_mod_tune <- nearest_neighbor(neighbors = tune()) %>%
   set_engine("kknn") %>%
   set_mode("classification")
 
-results_knn_k_2 <- find_k(k_grid, mvb_cvs, knn_mod_tune, recipe_best_subset, 'best_subset')
+results_knn_k_2 <- find_k(k_grid, mvb_cvs, knn_mod_tune, recipe_best_subset_norm, 'best_subset')
 
 results_knn_k_2 %>%
-  slice_max(ROC_AUC, n = 3)
+  slice_max(ROC_AUC, n = 5)
 ```
 
 ```{r}
 #| label: KNN-tune-3
 
-k_grid <- grid_regular(neighbors(c(20,30)), 
-                       levels = 10)
+k_grid <- grid_regular(neighbors(c(20,35)), 
+                       levels = 15)
 
 knn_mod_tune <- nearest_neighbor(neighbors = tune()) %>%
   set_engine("kknn") %>%
   set_mode("classification")
 
-results_knn_k_3 <- find_k(k_grid, mvb_cvs, knn_mod_tune, recipe_best_subset, 'best_subset')
+results_knn_k_3 <- find_k(k_grid, mvb_cvs, knn_mod_tune, recipe_best_subset_norm, 'best_subset')
 
 results_knn_k_3 %>%
   slice_max(ROC_AUC, n = 3)
@@ -429,24 +823,180 @@ results_knn_k_3 %>%
 ```{r}
 #| label: KNN-fit
 
-knn_mod <- nearest_neighbor(neighbors = 26) %>%
+knn_mod <- nearest_neighbor(neighbors = 28) %>%
   set_engine("kknn") %>%
   set_mode("classification")
 
 knn_wflow <- workflow() %>%
   add_model(knn_mod) %>% 
-  add_recipe(recipe_best_subset %>% step_normalize(all_numeric_predictors()))
+  add_recipe(recipe_best_subset_norm)
 
 knn_fit <- knn_wflow %>%
   fit(mvb_train)
 
-predict_metrics(mvb_train, knn_fit)
+predict_metrics(inner_join(mvb_test[,-1], full_df), knn_fit)
+```
 
-predict_metrics(full_df %>% inner_join(mvb_test[,-1]), knn_fit)
+## Elastic Net
+
+```{r}
+#| label: elastic-net-best-subset-tune
+
+net_grid <- grid_regular(penalty(),
+                         mixture(),
+                         levels = 10)
+
+net_mod_tune <- logistic_reg(penalty = tune(), 
+                             mixture = tune()) %>%
+  set_engine("glmnet") %>%
+  set_mode("classification")
+
+net_wflow_tune <- workflow() %>%
+  add_model(net_mod_tune) %>% 
+  add_recipe(recipe_best_subset_norm)
+
+net_grid_search <-
+  tune_grid(
+    net_wflow_tune,
+    resamples = mvb_cvs,
+    grid = net_grid,
+    metrics = metric_set(accuracy, roc_auc, gain_capture, precision, recall)
+  )
+
+net_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  slice_max(mean, n = 5)
+```
+
+```{r}
+#| label: elastic-net-best-subset-tune-2
+
+net_grid <- grid_regular(penalty(c(-2, 10), trans = log2_trans()),
+                         mixture(),
+                         levels = 20)
+
+net_mod_tune <- logistic_reg(penalty = tune(), 
+                             mixture = tune()) %>%
+  set_engine("glmnet") %>%
+  set_mode("classification")
+
+net_wflow_tune <- workflow() %>%
+  add_model(net_mod_tune) %>% 
+  add_recipe(recipe_best_subset_norm)
+
+net_grid_search <-
+  tune_grid(
+    net_wflow_tune,
+    resamples = mvb_cvs,
+    grid = net_grid,
+    metrics = metric_set(accuracy, roc_auc, gain_capture, precision, recall)
+  )
+
+net_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  slice_max(mean, n = 5)
+```
+
+```{r}
+#| label: elastic-net-best-subset-fit
+
+net_mod <- logistic_reg(penalty = 0.6000514, 
+                        mixture = 0) %>%
+  set_engine("glmnet") %>%
+  set_mode("classification")
+
+net_wflow <- workflow() %>%
+  add_model(net_mod) %>% 
+  add_recipe(recipe_best_subset_norm)
+
+net_fit <- net_wflow %>%
+  fit(mvb_train)
+
+predict_metrics(inner_join(mvb_test[,-1], full_df), net_fit)
+```
+
+## LDA
+
+```{r}
+#| label: LDA-tune
+
+lda_mod <- discrim_linear() %>%
+  set_engine("MASS") %>%
+  set_mode("classification")
+
+results_lda <- list_rbind(map2(test_recipes, names(test_recipes), ~fit_model(mvb_train, mvb_cvs, lda_mod, .x, .y)))
+
+results_lda
+```
+
+## QDA
+
+```{r}
+#| label: QDA-tune
+
+qda_mod <- discrim_regularized(frac_common_cov = 0) %>% 
+  set_engine('klaR') %>% 
+  set_mode('classification')
+
+results_qda <- list_rbind(map2(test_recipes[-3], names(test_recipes[-3]), ~fit_model(mvb_train, mvb_cvs, qda_mod, .x, .y)))
+
+results_qda
+```
+
+# Submitted Models
+
+## Submission 1
+
+```{r}
+#| label: RF-upsample-S1
+
+rf_mod <- rand_forest(mtry = 6, 
+                      min_n = 67,
+                      trees = 1200) %>%
+  set_engine("ranger", importance = 'impurity') %>%
+  set_mode("classification")
+
+rf_wflow <- workflow() %>%
+  add_model(rf_mod) %>% 
+  add_recipe(recipe_full_upsample)
+
+rf_fit <- rf_wflow %>%
+  fit(mvb_train)
+
+results <- mvb_test %>%
+  mutate(
+    ID_Num = id_num,
+    Preference = predict(rf_fit, mvb_test, type = "prob")$.pred_1
+    ) %>%
+  select(ID_Num, Preference)
+
+write_csv(results, 'submission1.csv')
+
+predict_metrics(inner_join(mvb_test, full_df), rf_fit)
+
+rf_tree_fit_extracted <- rf_fit %>%
+  extract_fit_parsnip()
+
+ranger_fit <- rf_tree_fit_extracted$fit
+
+importance(ranger_fit) %>%
+  data.frame(Feature = names(.), Importance = .) %>%
+  ggplot(aes(x = Importance, y = reorder(Feature, -Importance))) +
+  geom_col(fill = 'firebrick') +
+  theme_bw() +
+  labs(
+    x = 'Variable Importance',
+    y = 'Features',
+    title = 'Random Forest Variable Importance'
+  )
 ```
 
 
-## REMOVE LATER
+
+
+# REMOVE LATER
 
 ```{r}
 full_df <- read.csv(here('data', 'midterm', 'mountains_vs_beaches_preferences.csv')) %>% clean_names()
@@ -457,6 +1007,13 @@ full_df <- full_df %>%
   ) %>%
   select(-preferred_activities)
 
-identical(full_df %>% inner_join(mvb_test[,-1], by = colnames(mvb_test[,-1])) %>% select(-preference), mvb_test[,-1])
+```
+
+```{r}
+identical(inner_join(mvb_train[,-1], full_df), mvb_train[,-1])
+```
+
+```{r}
+mvb_test[,-1]
 ```
 
