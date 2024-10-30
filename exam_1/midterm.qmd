@@ -416,7 +416,7 @@ recipe_1 <- recipe_best_subset %>%
 
 recipe_forward_upsample <- recipe_forward_norm %>%
   step_dummy(all_nominal_predictors()) %>%
-  step_upsample(preference, seed = 123)
+  step_upsample(preference)
 ```
 
 ```{r}
@@ -434,8 +434,6 @@ test_recipes_plus <- test_recipes %>%
 
 ```{r}
 #| label: initialize-CV
-
-# set.seed(123)
 
 mvb_cvs <- vfold_cv(mvb_train, v = 10)
 
@@ -646,8 +644,8 @@ rf_up_grid_search %>%
 #| lablel: RF-tune-upsample-3
 
 rf_up_grid <- grid_regular(mtry(c(5, 11)),
-                        min_n(c(65, 80)), 
-                        levels = 25)
+                        min_n(c(35, 80)), 
+                        levels = 100)
 
 rf_up_mod_tune <- rand_forest(mtry = tune(), 
                            min_n = tune(),
@@ -1236,7 +1234,7 @@ best_roc <- 0
 
 while(roc <= 0.85) {
 
-  sed <- floor(runif(1, 1, 5326))
+  # sed <- floor(runif(1, 1, 5326))
   
   # set.seed(sed)
   
@@ -1244,8 +1242,8 @@ while(roc <= 0.85) {
   #   update_role(id_num, new_role = "id variable") %>%
   #   step_upsample(preference, seed = sed)
   
-  m <- floor(runif(1, 5, 9))
-  n <- floor(runif(1, 50, 70))
+  m <- floor(runif(1, 4, 11))
+  n <- floor(runif(1, 40, 80))
   tree <- floor(runif(1, 15, 45))
   
   rf_mod <- rand_forest(mtry = m, 
@@ -1278,13 +1276,14 @@ while(roc <= 0.85) {
     best_n <- n
     best_m <- m
     best_results <- results
-    best_seed <- sed
+    best_fit <- rf_fit
+    # best_seed <- sed
     
     print(n)
     print(m)
     print(tree)
     print(roc)
-    print('--------------')
+    print('------------')
   }
   
   if(roc >= .85){
