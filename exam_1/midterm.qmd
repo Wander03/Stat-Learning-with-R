@@ -3,13 +3,19 @@ title: "Midterm"
 author: "Andrew Kerr"
 format: 
   html:
+    toc: true
+    toc-title: "Outline"
+    toc-depth: 3
     code-fold: true
     code-line-numbers: true
     code-tools: true
+    theme:
+      light: flatly
+      dark: darkly
+    default: dark
 embed-resources: true
 editor: source
-execute: 
-  cache: true
+eval: false
 ---
 
 ```{r}
@@ -25,7 +31,6 @@ library(themis)
 library(leaps)
 library(discrim)
 library(ranger)
-library(dataMaid)
 ```
 
 # Data
@@ -44,6 +49,8 @@ mvb_test <- read_csv(here('data', 'midterm', 'm_v_b_test.csv')) %>% clean_names(
 
 ```{r}
 #| label: data-cleaning
+#| message: false
+#| warning: false
 
 factor_cols <- c('gender',
                  'education_level',
@@ -64,7 +71,94 @@ mvb_test <- mvb_test %>%
     across(.cols = any_of(factor_cols), .fns = ~factor(.))
   )
 
-# makeDataReport(mvb_train, output = 'html', replace = T)
+mvb_train_testing <- mvb_train %>%
+  mutate(m2 = proximity_to_mountains**2,
+         b2 = proximity_to_beaches**2,
+         m_log = log10(proximity_to_mountains),
+         b_log = log10(proximity_to_beaches),
+         m_sqrt = sqrt(proximity_to_mountains),
+         b_sqrt = sqrt(proximity_to_beaches),
+         t = m_log * b2,
+         proxy_m_fac = factor(case_when(
+           proximity_to_mountains < 100 ~ 'close',
+           proximity_to_mountains < 200 ~ 'kinda close',
+           TRUE ~ 'far'
+         )),
+         proxy_b_fac = factor(case_when(
+           proximity_to_beaches < 100 ~ 'close',
+           proximity_to_beaches < 200 ~ 'kinda close',
+           TRUE ~ 'far'
+         ))
+         )
+
+GGally::ggpairs(mvb_train, 
+                columns = c("age", "income", "travel_frequency", 
+                            "vacation_budget", "proximity_to_mountains", 
+                            "proximity_to_beaches", "preference"),
+                aes(color = preference)
+                )
+
+GGally::ggpairs(mvb_train, 
+                columns = c("gender", "education_level", "location", 
+                            "favorite_season", "pets", "environmental_concerns", 
+                            "preference"),
+                aes(color = preference)
+                )
+
+GGally::ggpairs(mvb_train_testing, 
+                columns = c(
+                  "proximity_to_mountains", "proximity_to_beaches", 
+                  "education_level", "gender", "proxy_m_fac", "proxy_b_fac",
+                  "preference"
+                  ),
+                aes(color = preference)
+                )
+
+GGally::ggpairs(mvb_train_testing, 
+                columns = c(
+                  "m2", "b2", "m_log", "b_log", "m_sqrt", "b_sqrt", "t", "preference"
+                  ),
+                aes(color = preference)
+                )
+```
+
+# REMOVE LATER
+
+```{r}
+full_df <- read.csv(here('data', 'midterm', 'mountains_vs_beaches_preferences.csv')) %>% clean_names()
+
+full_df <- full_df %>%
+  mutate(
+    across(.cols = all_of(factor_cols), .fns = ~factor(.))
+  ) %>%
+  select(-preferred_activities)
+
+full_test <- inner_join(mvb_test, full_df)
+
+full_test_2 <- full_test %>%
+  mutate(m2 = proximity_to_mountains**2,
+         b2 = proximity_to_beaches**2,
+         m_log = log10(proximity_to_mountains),
+         b_log = log10(proximity_to_beaches),
+         m_sqrt = sqrt(proximity_to_mountains),
+         b_sqrt = sqrt(proximity_to_beaches),
+         t = m_log * b2,
+         proxy_m_fac = factor(case_when(
+           proximity_to_mountains < 100 ~ 'close',
+           proximity_to_mountains < 200 ~ 'kinda close',
+           TRUE ~ 'far'
+         )),
+         proxy_b_fac = factor(case_when(
+           proximity_to_beaches < 100 ~ 'close',
+           proximity_to_beaches < 200 ~ 'kinda close',
+           TRUE ~ 'far'
+         ))
+         )
+
+```
+
+```{r}
+identical(inner_join(mvb_train[,-1], full_df), mvb_train[,-1])
 ```
 
 # Functions
@@ -78,13 +172,6 @@ predict_metrics <- function(pred_data, fitted_model) {
     bind_cols(predict(fitted_model, pred_data, type = "prob")) %>%
     mutate(
       .pred_preference = predict(fitted_model, pred_data)$.pred_class
-    ) %>%
-    select(
-      1,
-      preference,
-      .pred_0,
-      .pred_1,
-      .pred_preference
     )
 
   accuracy_tree_bag <- genes_sub_pred %>%
@@ -220,7 +307,7 @@ recipe_full_downsample <- recipe(preference ~ ., data = mvb_train) %>%
 ## Recipe Tuning
 
 ```{r}
-#| lable: variable-selection
+#| label: variable-selection
 
 ################################################################################
 
@@ -303,7 +390,8 @@ recipe_forward <- recipe(preference ~
   step_interact(terms = ~gender:education_level)
 
 recipe_forward_norm <- recipe_forward %>% 
-  step_normalize(all_numeric_predictors())
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors())
 
 recipe_best_subset <- recipe(preference ~ 
                                proximity_to_mountains + 
@@ -311,7 +399,24 @@ recipe_best_subset <- recipe(preference ~
                              data = mvb_train)
 
 recipe_best_subset_norm <- recipe_best_subset %>% 
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors())
+
+recipe_forward_true <- recipe(preference ~ 
+                           proximity_to_mountains + 
+                           proximity_to_beaches,
+                           data = mvb_train) %>%
+  step_interact(terms = ~gender:education_level)
+
+################################################################################
+
+recipe_1 <- recipe_best_subset %>%
+  step_interact(term = ~proximity_to_mountains:proximity_to_beaches) %>%
   step_normalize(all_numeric_predictors())
+
+recipe_forward_upsample <- recipe_forward_norm %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_upsample(preference, seed = 123)
 ```
 
 ```{r}
@@ -333,6 +438,8 @@ test_recipes_plus <- test_recipes %>%
 set.seed(123)
 
 mvb_cvs <- vfold_cv(mvb_train, v = 10)
+
+mvb_cvs <- vfold_cv(mvb_train_testing, v = 10)
 ```
 
 ## Random Forest Model
@@ -470,8 +577,6 @@ rf_wflow <- workflow() %>%
 
 rf_fit <- rf_wflow %>%
   fit(mvb_train)
-
-predict_metrics(inner_join(mvb_test, full_df), rf_fit)
 
 rf_tree_fit_extracted <- rf_fit %>%
   extract_fit_parsnip()
@@ -656,8 +761,6 @@ rf_wflow <- workflow() %>%
 rf_fit <- rf_wflow %>%
   fit(mvb_train)
 
-predict_metrics(inner_join(mvb_test, full_df), rf_fit)
-
 rf_tree_fit_extracted <- rf_fit %>%
   extract_fit_parsnip()
 
@@ -832,7 +935,7 @@ logreg_mod <- logistic_reg() %>%
 
 logreg_mod_wflow <- workflow() %>%
   add_model(logreg_mod) %>% 
-  add_recipe(recipe_best_subset_norm)
+  add_recipe(recipe_best_subset)
 
 logreg_fit <- logreg_mod_wflow %>%
   fit_resamples(mvb_cvs)
@@ -846,27 +949,32 @@ logreg_fit %>%
 ```{r}
 #| label: KNN-tune
 
-k_grid <- grid_regular(neighbors(c(1,100)), 
-                       levels = 101)
+# k_grid <- grid_regular(neighbors(c(1,7000)), 
+#                        levels = 71)
+# 
+# knn_mod_tune <- nearest_neighbor(neighbors = tune()) %>%
+#   set_engine("kknn") %>%
+#   set_mode("classification")
+# 
+# results_knn_k <- list_rbind(map2(test_recipes_plus, names(test_recipes_plus), ~find_k(k_grid, mvb_cvs, knn_mod_tune, .x, .y)))
+# 
+# write.csv(results_knn_k, 'knn_grid_results.csv')
 
-knn_mod_tune <- nearest_neighbor(neighbors = tune()) %>%
-  set_engine("kknn") %>%
-  set_mode("classification")
-
-results_knn_k <- list_rbind(map2(test_recipes_plus, names(test_recipes_plus), ~find_k(k_grid, mvb_cvs, knn_mod_tune, .x, .y)))
+results_knn_k <- read_csv(here('exam_1', 'knn_grid_results.csv'))
 
 results_knn_k %>%
-  slice_max(ROC_AUC, by = Recipe, n = 3)
+  slice_max(ROC_AUC, n = 10)
 
 results_knn_k %>%
+  filter(ROC_AUC > .835) %>%
   ggplot() +
   geom_line(aes(x = k, y = ROC_AUC, color = Recipe)) +
   theme_bw()
 ```
 
 ```{r}
-k_grid <- grid_regular(neighbors(c(1,10000)), 
-                       levels = 101)
+k_grid <- grid_regular(neighbors(c(1,7000)),
+                       levels = 701)
 
 knn_mod_tune <- nearest_neighbor(neighbors = tune()) %>%
   set_engine("kknn") %>%
@@ -884,7 +992,7 @@ results_knn_k_2 %>%
 ```
 
 ```{r}
-k_grid <- grid_regular(neighbors(c(1000,10000)), 
+k_grid <- grid_regular(neighbors(c(1000,10000)),
                        levels = 10)
 
 knn_mod_tune <- nearest_neighbor(neighbors = tune()) %>%
@@ -903,18 +1011,16 @@ results_knn_k %>%
 ```
 
 ```{r}
-knn_mod <- nearest_neighbor(neighbors = 7000) %>%
+knn_mod <- nearest_neighbor(neighbors = 10000) %>%
   set_engine("kknn") %>%
   set_mode("classification")
 
 knn_wflow <- workflow() %>%
-  add_model(knn_mod) %>% 
-  add_recipe(recipe_forward_norm)
+  add_model(knn_mod) %>%
+  add_recipe(recipe_best_subset)
 
 knn_fit <- knn_wflow %>%
   fit(mvb_train)
-
-predict_metrics(inner_join(mvb_test[,-1], full_df) %>% mutate(id_num = 1), knn_fit)
 ```
 
 
@@ -963,8 +1069,6 @@ knn_wflow <- workflow() %>%
 
 knn_fit <- knn_wflow %>%
   fit(mvb_train)
-
-predict_metrics(inner_join(mvb_test[,-1], full_df), knn_fit)
 ```
 
 ## Elastic Net
@@ -974,7 +1078,7 @@ predict_metrics(inner_join(mvb_test[,-1], full_df), knn_fit)
 
 net_grid <- grid_regular(penalty(),
                          mixture(),
-                         levels = 10)
+                         levels = 100)
 
 net_mod_tune <- logistic_reg(penalty = tune(), 
                              mixture = tune()) %>%
@@ -983,7 +1087,7 @@ net_mod_tune <- logistic_reg(penalty = tune(),
 
 net_wflow_tune <- workflow() %>%
   add_model(net_mod_tune) %>% 
-  add_recipe(recipe_best_subset_norm)
+  add_recipe(recipe_forward_norm)
 
 net_grid_search <-
   tune_grid(
@@ -1002,9 +1106,9 @@ net_grid_search %>%
 ```{r}
 #| label: elastic-net-best-subset-tune-2
 
-net_grid <- grid_regular(penalty(c(-2, 10), trans = log2_trans()),
+net_grid <- grid_regular(penalty(c(-5, 1), trans = log2_trans()),
                          mixture(),
-                         levels = 20)
+                         levels = 101)
 
 net_mod_tune <- logistic_reg(penalty = tune(), 
                              mixture = tune()) %>%
@@ -1013,7 +1117,7 @@ net_mod_tune <- logistic_reg(penalty = tune(),
 
 net_wflow_tune <- workflow() %>%
   add_model(net_mod_tune) %>% 
-  add_recipe(recipe_best_subset_norm)
+  add_recipe(recipe_forward_norm)
 
 net_grid_search <-
   tune_grid(
@@ -1032,19 +1136,17 @@ net_grid_search %>%
 ```{r}
 #| label: elastic-net-best-subset-fit
 
-net_mod <- logistic_reg(penalty = 0.6000514, 
-                        mixture = 0) %>%
+net_mod <- logistic_reg(penalty = 1.0281138, 
+                        mixture = 0.01) %>%
   set_engine("glmnet") %>%
   set_mode("classification")
 
 net_wflow <- workflow() %>%
   add_model(net_mod) %>% 
-  add_recipe(recipe_best_subset_norm)
+  add_recipe(recipe_forward_norm)
 
 net_fit <- net_wflow %>%
   fit(mvb_train)
-
-predict_metrics(inner_join(mvb_test[,-1], full_df), net_fit)
 ```
 
 ## LDA
@@ -1073,6 +1175,13 @@ qda_mod <- discrim_regularized(frac_common_cov = 0) %>%
 results_qda <- list_rbind(map2(test_recipes[-3], names(test_recipes[-3]), ~fit_model(mvb_train, mvb_cvs, qda_mod, .x, .y)))
 
 results_qda
+
+qda_wflow <- workflow() %>%
+  add_model(qda_mod) %>% 
+  add_recipe(recipe_best_subset_norm)
+
+qda_fit <- qda_wflow %>%
+  fit(mvb_train)
 ```
 
 # Submitted Models
@@ -1104,8 +1213,6 @@ results <- mvb_test %>%
 
 write_csv(results, 'submission1.csv')
 
-predict_metrics(inner_join(mvb_test, full_df), rf_fit)
-
 rf_tree_fit_extracted <- rf_fit %>%
   extract_fit_parsnip()
 
@@ -1123,27 +1230,34 @@ importance(ranger_fit) %>%
   )
 ```
 
-
-
-
-# REMOVE LATER
+## Submission 2
 
 ```{r}
-full_df <- read.csv(here('data', 'midterm', 'mountains_vs_beaches_preferences.csv')) %>% clean_names()
+#| label: Net-S2
 
-full_df <- full_df %>%
+net_mod <- logistic_reg(penalty = 1.0281138, 
+                        mixture = 0.01) %>%
+  set_engine("glmnet") %>%
+  set_mode("classification")
+
+net_wflow <- workflow() %>%
+  add_model(net_mod) %>% 
+  add_recipe(recipe_forward_norm)
+
+net_fit <- net_wflow %>%
+  fit(mvb_train)
+
+results <- mvb_test %>%
   mutate(
-    across(.cols = all_of(factor_cols), .fns = ~factor(.))
-  ) %>%
-  select(-preferred_activities)
+    ID_Num = id_num,
+    Preference = predict(net_fit, mvb_test, type = "prob")$.pred_1
+    ) %>%
+  dplyr::select(ID_Num, Preference)
 
+write_csv(results, 'submission2.csv')
 ```
 
-```{r}
-identical(inner_join(mvb_train[,-1], full_df), mvb_train[,-1])
-```
 
-```{r}
-mvb_test[,-1]
-```
+
+
 
