@@ -21,6 +21,7 @@ eval: false
 ```{r}
 #| label: libraries-r
 #| message: false
+#| eval: true
 
 library(tidyverse)
 library(tidymodels)
@@ -848,6 +849,8 @@ results_knn_k %>%
 ```
 
 ```{r}
+#| label: extra-testing-1
+
 k_grid <- grid_regular(neighbors(c(1,7000)),
                        levels = 701)
 
@@ -867,6 +870,8 @@ results_knn_k_2 %>%
 ```
 
 ```{r}
+#| label: extra-testing-2
+
 k_grid <- grid_regular(neighbors(c(1000,10000)),
                        levels = 10)
 
@@ -886,6 +891,8 @@ results_knn_k %>%
 ```
 
 ```{r}
+#| label: extra-testing-3
+
 knn_mod <- nearest_neighbor(neighbors = 10000) %>%
   set_engine("kknn") %>%
   set_mode("classification")
@@ -897,7 +904,6 @@ knn_wflow <- workflow() %>%
 knn_fit <- knn_wflow %>%
   fit(mvb_train)
 ```
-
 
 ```{r}
 #| label: KNN-tune-2
@@ -1050,13 +1056,6 @@ qda_mod <- discrim_regularized(frac_common_cov = 0) %>%
 results_qda <- list_rbind(map2(test_recipes[-3], names(test_recipes[-3]), ~fit_model(mvb_train, mvb_cvs, qda_mod, .x, .y)))
 
 results_qda
-
-qda_wflow <- workflow() %>%
-  add_model(qda_mod) %>% 
-  add_recipe(recipe_best_subset_norm)
-
-qda_fit <- qda_wflow %>%
-  fit(mvb_train)
 ```
 
 # Submitted Models
@@ -1087,22 +1086,6 @@ results <- mvb_test %>%
   select(ID_Num, Preference)
 
 write_csv(results, 'submission1.csv')
-
-rf_tree_fit_extracted <- rf_fit %>%
-  extract_fit_parsnip()
-
-ranger_fit <- rf_tree_fit_extracted$fit
-
-importance(ranger_fit) %>%
-  data.frame(Feature = names(.), Importance = .) %>%
-  ggplot(aes(x = Importance, y = reorder(Feature, -Importance))) +
-  geom_col(fill = 'firebrick') +
-  theme_bw() +
-  labs(
-    x = 'Variable Importance',
-    y = 'Features',
-    title = 'Random Forest Variable Importance'
-  )
 ```
 
 ## Submission 2
@@ -1127,7 +1110,7 @@ results <- mvb_test %>%
     ID_Num = id_num,
     Preference = predict(net_fit, mvb_test, type = "prob")$.pred_1
     ) %>%
-  dplyr::select(ID_Num, Preference)
+  select(ID_Num, Preference)
 
 write_csv(results, 'submission2.csv')
 ```
