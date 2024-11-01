@@ -41,6 +41,7 @@ library(ranger)
 ```{r}
 #| label: data-read-in
 #| message: false
+#| eval: true
 
 mvb_train <- read_csv(here('data', 'midterm', 'm_v_b_train.csv')) %>% clean_names()
 mvb_test <- read_csv(here('data', 'midterm', 'm_v_b_test.csv')) %>% clean_names()
@@ -52,6 +53,7 @@ mvb_test <- read_csv(here('data', 'midterm', 'm_v_b_test.csv')) %>% clean_names(
 #| label: data-cleaning
 #| message: false
 #| warning: false
+#| eval: true
 
 factor_cols <- c('gender',
                  'education_level',
@@ -71,6 +73,12 @@ mvb_test <- mvb_test %>%
   mutate(
     across(.cols = any_of(factor_cols), .fns = ~factor(.))
   )
+```
+
+```{r}
+#| label: data-testing
+#| message: false
+#| warning: false
 
 mvb_train_testing <- mvb_train %>%
   mutate(m2 = proximity_to_mountains**2,
@@ -352,6 +360,7 @@ mvb_cvs <- vfold_cv(mvb_train_testing, v = 10)
 ```
 
 ## Random Forest Model
+
 ### Full Model
 
 ```{r}
@@ -948,7 +957,7 @@ knn_wflow <- workflow() %>%
   add_model(knn_mod) %>% 
   add_recipe(recipe_best_subset_norm)
 
-knn_fit <- knn_wflow %>%
+knn_fit_2 <- knn_wflow %>%
   fit(mvb_train)
 ```
 
@@ -1149,16 +1158,7 @@ for(i in 1:100000) {
   
   if(roc > best_roc){
     best_roc <- roc
-    best_tree <- tree
-    best_n <- n
-    best_m <- m
     best_fit <- rf_fit
-    
-    print(n)
-    print(m)
-    print(tree)
-    print(roc)
-    print('------------')
   }
 
 }
@@ -1175,11 +1175,19 @@ saveRDS(best_fit, "best_fitted_model.rds")
 write_csv(results, 'submission3.csv')
 ```
 
-# Best Model
+# Final Fitted (Best) Model
 
 ```{r}
 #| label: best-model
 #| eval: true
+#| message: false
+
+GGally::ggpairs(mvb_train, 
+                columns = c("age", "income", "travel_frequency", 
+                            "vacation_budget", "proximity_to_mountains", 
+                            "proximity_to_beaches", "preference"),
+                aes(color = preference)
+                )
 
 best_model <- readRDS("best_fitted_model.rds")
 
@@ -1198,7 +1206,14 @@ importance(ranger_fit) %>%
   labs(
     x = 'Variable Importance',
     y = 'Features',
-    title = 'Random Forest Variable Importance'
+    title = 'Random Forest Variable Importance Plot'
   )
 ```
 
+## Interpretation
+
+My final model is a random forest with 18 trees, each using 5 predictors, and a minimum node size of 52 observations. This model was trained on an upsampled version of the training data to combat the class imbalance (75% preferred beached while 25% preferred mountains) with a recipe containing all 12 predictors. 
+
+What I discovered about the data from my model is that the predictors *proximity to beaches* and *proximity to mountains* are by far the most important variables. In other words, these two predictors are the most helpful when identifying whether a given person mountains or beaches. I thought that vacation budget and favorite season would be the most important, however, as seen in the above variable importance plot, these two predictors are nowhere near as important as the proximity predictors. 
+
+These insights are further supported when viewing the distributions of each predictor. For example, look at the diagonal histograms from the ggpairs output. The distribution for each numeric predictor of individuals who prefer beaches matches that for those who prefer mountains, expect for the the two proximity related predictors. Here, we see that those closer to the beach tend to prefer the beach, while those closer to mountains tend to prefer mountains.
