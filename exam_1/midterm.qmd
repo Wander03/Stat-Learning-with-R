@@ -1176,8 +1176,6 @@ results <- mvb_test %>%
     ) %>%
   select(ID_Num, Preference)
 
-predict_metrics(full_test, rf_fit)
-
 write_csv(results, 'submission1.csv')
 
 rf_tree_fit_extracted <- rf_fit %>%
@@ -1232,15 +1230,7 @@ write_csv(results, 'submission2.csv')
 roc <- 0
 best_roc <- 0
 
-while(roc <= 0.85) {
-
-  # sed <- floor(runif(1, 1, 5326))
-  
-  # set.seed(sed)
-  
-  # recipe_full_upsample <- recipe(preference ~ ., data = mvb_train) %>%
-  #   update_role(id_num, new_role = "id variable") %>%
-  #   step_upsample(preference, seed = sed)
+while(T) {
   
   m <- floor(runif(1, 4, 11))
   n <- floor(runif(1, 40, 80))
@@ -1257,27 +1247,19 @@ while(roc <= 0.85) {
     add_recipe(recipe_full_upsample)
   
   rf_fit <- rf_wflow %>%
-    fit(mvb_train)
-  
-  results <- mvb_test %>%
-    mutate(
-      ID_Num = id_num,
-      Preference = predict(rf_fit, mvb_test, type = "prob")$.pred_1
-      ) %>%
-    select(ID_Num, Preference)
-  
-  roc <- predict_metrics(full_test, rf_fit) %>%
-    filter(.metric == 'roc_auc') %>%
-    pull(.estimate)
+    fit_resamples(mvb_cvs)
+
+  roc <- rf_fit %>% 
+    collect_metrics() %>%
+    filter(.metric == "roc_auc") %>%
+    pull(mean)
   
   if(roc > best_roc){
     best_roc <- roc
     best_tree <- tree
     best_n <- n
     best_m <- m
-    best_results <- results
     best_fit <- rf_fit
-    # best_seed <- sed
     
     print(n)
     print(m)
@@ -1285,30 +1267,47 @@ while(roc <= 0.85) {
     print(roc)
     print('------------')
   }
-  
-  if(roc >= .85){
-    write_csv(results, 'submission3.csv')
-  }
 
 }
-# write_csv(results, 'submission1.csv')
-# 
-# rf_tree_fit_extracted <- rf_fit %>%
-#   extract_fit_parsnip()
-# 
-# ranger_fit <- rf_tree_fit_extracted$fit
-# 
-# importance(ranger_fit) %>%
-#   data.frame(Feature = names(.), Importance = .) %>%
-#   ggplot(aes(x = Importance, y = reorder(Feature, -Importance))) +
-#   geom_col(fill = 'firebrick') +
-#   theme_bw() +
-#   labs(
-#     x = 'Variable Importance',
-#     y = 'Features',
-#     title = 'Random Forest Variable Importance'
-#   )
+
+results <- mvb_test %>%
+    mutate(
+      ID_Num = id_num,
+      Preference = predict(best_fit, mvb_test, type = "prob")$.pred_1
+      ) %>%
+    select(ID_Num, Preference)
+
+saveRDS(best_fit, "best_fitted_model.rds")
+
+write_csv(results, 'submission3.csv')
 ```
 
+# Best Model
 
+```{r}
+#| label: best-model
+#| eval: true
+
+best_model <- readRDS("best_fitted_model.rds")
+
+rf_tree_fit_extracted <- best_model %>%
+  extract_fit_parsnip()
+
+rf_tree_fit_extracted$fit
+
+ranger_fit <- rf_tree_fit_extracted$fit
+
+importance(ranger_fit) %>%
+  data.frame(Feature = names(.), Importance = .) %>%
+  ggplot(aes(x = Importance, y = reorder(Feature, -Importance))) +
+  geom_col(fill = 'firebrick') +
+  theme_bw() +
+  labs(
+    x = 'Variable Importance',
+    y = 'Features',
+    title = 'Random Forest Variable Importance'
+  )
+
+predict_metrics(full_test, rf_tree_fit_extracted)
+```
 
