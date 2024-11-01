@@ -122,97 +122,7 @@ GGally::ggpairs(mvb_train_testing,
                 )
 ```
 
-# REMOVE LATER
-
-```{r}
-full_df <- read.csv(here('data', 'midterm', 'mountains_vs_beaches_preferences.csv')) %>% clean_names()
-
-full_df <- full_df %>%
-  mutate(
-    across(.cols = all_of(factor_cols), .fns = ~factor(.))
-  ) %>%
-  select(-preferred_activities)
-
-full_test <- inner_join(mvb_test, full_df)
-
-full_test_2 <- full_test %>%
-  mutate(m2 = proximity_to_mountains**2,
-         b2 = proximity_to_beaches**2,
-         m_log = log10(proximity_to_mountains),
-         b_log = log10(proximity_to_beaches),
-         m_sqrt = sqrt(proximity_to_mountains),
-         b_sqrt = sqrt(proximity_to_beaches),
-         t = m_log * b2,
-         proxy_m_fac = factor(case_when(
-           proximity_to_mountains < 100 ~ 'close',
-           proximity_to_mountains < 200 ~ 'kinda close',
-           TRUE ~ 'far'
-         )),
-         proxy_b_fac = factor(case_when(
-           proximity_to_beaches < 100 ~ 'close',
-           proximity_to_beaches < 200 ~ 'kinda close',
-           TRUE ~ 'far'
-         ))
-         )
-
-```
-
-```{r}
-identical(inner_join(mvb_train[,-1], full_df), mvb_train[,-1])
-```
-
 # Functions
-
-```{r}
-#| label: prediction-function
-
-predict_metrics <- function(pred_data, fitted_model) {
-  
-  genes_sub_pred <- pred_data %>%
-    bind_cols(predict(fitted_model, pred_data, type = "prob")) %>%
-    mutate(
-      .pred_preference = predict(fitted_model, pred_data)$.pred_class
-    )
-
-  accuracy_tree_bag <- genes_sub_pred %>%
-    accuracy(
-      truth = preference,
-      estimate = .pred_preference
-    )
-  
-  precision_tree_bag <- genes_sub_pred %>%
-    precision(
-      truth = preference,
-      estimate = .pred_preference
-    )
-  
-  recall_tree_bag <- genes_sub_pred %>%
-    recall(
-      truth = preference,
-      estimate = .pred_preference
-    )
-  
-  roc_auc_tree_bag <- genes_sub_pred %>%
-    roc_auc(
-      truth = preference,
-      .pred_0
-      )
-
-  gain_capture_tree_bag <- genes_sub_pred %>%
-    gain_capture(
-      truth = preference,
-      .pred_0
-      )
-
-  rbind(accuracy_tree_bag, 
-        roc_auc_tree_bag, 
-        gain_capture_tree_bag, 
-        precision_tree_bag, 
-        recall_tree_bag
-        )
-
-}
-```
 
 ```{r}
 #| label: knn-k-function
@@ -1230,7 +1140,7 @@ write_csv(results, 'submission2.csv')
 roc <- 0
 best_roc <- 0
 
-while(T) {
+for(i in 1:100000) {
   
   m <- floor(runif(1, 4, 11))
   n <- floor(runif(1, 40, 80))
@@ -1307,7 +1217,5 @@ importance(ranger_fit) %>%
     y = 'Features',
     title = 'Random Forest Variable Importance'
   )
-
-predict_metrics(full_test, rf_tree_fit_extracted)
 ```
 
