@@ -286,7 +286,7 @@ predict_metrics(genes_validation, rf_fit) %>%
   kable()
 ```
 
-The random forest model did well!
+The random forest model did well! It has similar metrics to the decision tree, but has a much higher ROC AUC and gain capture (node purity).
 
 #### Q6: Explanation
 
@@ -657,7 +657,7 @@ net_fit %>%
   kable()
 ```
 
-38 genes were selected, with Z24727_at, Z29067_at, and M14636_at seemingly the thre most important.
+38 genes were selected, with Z24727_at, Z29067_at, and M14636_at seemingly the the most important.
 
 Report the performance of the model on the validation set.
 
@@ -668,4 +668,4 @@ predict_metrics(genes_validation, net_fit) %>%
   kable()
 ```
 
-The final model has the same accuracy, precision, and recall as the decision tree and RF models, the same gain capture as RF (which is greater than that from the decision tree), and better roc auc then both models. With a greater recall than precision, we can say that this model prioritizes detecting true positive values over minimizing false negatives (it will categorize more patients as having AML at the cost of some incorrect classifications).
+The final model has the same recall as the RF model, and better values for all other metrics. With a greater recall than precision, we can say that this model prioritizes detecting true positive values over minimizing false negatives (it will categorize more patients as having AML at the cost of some incorrect classifications), but since both values are high we are very happy here.
