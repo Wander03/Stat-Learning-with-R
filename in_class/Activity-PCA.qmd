@@ -65,12 +65,16 @@ pc <- prcomp(cann_matrix,
 Combinations of variables that create new axes:
 
 ```{r}
+#| echo: true
+#| results: hide
 pc$rotation
 ```
 
 Check out most important PCs:
 
 ```{r}
+#| echo: true
+#| results: hide
 pc$rotation %>% 
   data.frame() %>%
   arrange(
@@ -83,6 +87,8 @@ pc$rotation %>%
 Make a dataframe with PCs as columns:
 
 ```{r}
+#| echo: true
+#| results: hide
 new_dims_df <- pc$x %>%
   as.data.frame() %>% 
   bind_cols(cann_types) %>% 
@@ -179,43 +185,47 @@ cumul_vars
       rec_fit <- rec_wflow %>% fit(data)
       rec_fit_cv <- rec_wflow %>% fit_resamples(data_cv)
       
-      roc_auc <- collect_metrics(rec_fit_cv) %>% filter(.metric == 'roc_auc') %>% pull(mean)
+      roc_auc <- collect_metrics(rec_fit_cv) %>% 
+        filter(.metric == 'roc_auc') %>% 
+        pull(mean)
 
       pred_output <- data %>%
-        mutate(predicted_response = predict(rec_fit, .)$.pred_class) 
-      
-      conf_matrix <- pred_output %>%
-        conf_mat(truth = preference, estimate = predicted_response) %>%
-        tidy() %>%
-        pivot_wider(names_from = name, values_from = value)
-      
-      tp <- conf_matrix$cell_1_1[1]
-      fp <- conf_matrix$cell_1_2[1]
-      fn <- conf_matrix$cell_2_1[1]
-      tn <- conf_matrix$cell_2_2[1]
+        mutate(predicted_response = predict(rec_fit, .)$.pred_class,
+               Type = factor(Type)) 
 
       data.frame(
         Recipe = rec_name,
         ROC_AUC = roc_auc,
-        TN = tn,
-        FP = fp,
-        FN = fn,
-        TP = tp,
-        Precision = precision(pred_output, truth = preference, estimate = predicted_response)$.estimate,
-        Recall = recall(pred_output, truth = preference, estimate = predicted_response)$.estimate
+        Accuracy = accuracy(pred_output,
+                            truth = Type,
+                            estimate = predicted_response)
       )
       
     }
     ```
 
     ```{r}
-    recipe_all <- recipe(Type ~ ., data = cann) %>%
-      step_rm(Strain, Rating)
-    recipe_important <- recipe(Type ~ Sleepy + Relaxed + Energetic + Creative + Hungry, data = cann) %>%
-      step_rm(Strain, Rating)
-    recipe_PCA <- recipe(Type ~ ., data = cann) %>%
-      step_rm(Strain, Rating) %>%
-      step_pca(threshold = 0.8)
+    #| warning: false
+
+    cann_clean <- cann %>%
+      select(-Strain, -Effects, -Flavor, -Dry, -Mouth)
+
+    recipe_all <- recipe(Type ~ ., 
+                         data = cann_clean)
+
+    recipe_important <- recipe(Type ~ Sleepy + 
+                                 Relaxed + 
+                                 Energetic + 
+                                 Creative + 
+                                 Hungry, 
+                               data = cann_clean)
+
+    recipe_PCA <- recipe(Type ~ ., 
+                         data = cann_clean) %>%
+      step_pca(all_predictors(),
+               options = list(center = T,
+                              scale = T),
+               threshold = 0.8)
 
     recipes <- list('ALL' = recipe_all, 
                     'IMPORTANT' = recipe_important, 
@@ -224,7 +234,7 @@ cumul_vars
     cann_cvs <- vfold_cv(cann, v = 10)
 
     k_grid <- grid_regular(neighbors(),
-                           levels = 2)
+                           levels = 10)
 
     knn_mod_tune <- nearest_neighbor(neighbors = tune()) %>%
       set_engine("kknn") %>%
@@ -237,7 +247,7 @@ cumul_vars
       slice(which.max(ROC_AUC)) %>%
       ungroup()
 
-    results_knn <- list_rbind(map2(test_recipes, names(test_recipes), ~{
+    results_knn <- list_rbind(map2(recipes, names(recipes), ~{
       
       cur_k <- best_k %>% filter(Recipe == .y) %>% pull(k)
       
@@ -245,11 +255,11 @@ cumul_vars
       set_engine("kknn") %>%
       set_mode("classification")
       
-      fit_model(ha_clean, ha_cv, knn_mod, .x, .y) %>% mutate(k = cur_k)
+      fit_model(cann_clean, cann_cvs, knn_mod, .x, .y) %>% mutate(k = cur_k)
       
       }))
 
-    results_knn %>% slice_max(Accuracy, n = 5)
+    results_knn
     ```
 
 6.  All the variables
@@ -258,6 +268,6 @@ cumul_vars
 
 8.  Only your chosen PCs
 
-<!-- -->
+9.  Compare the accuracy of these three approaches!
 
-6.  Compare the accuracy of these three approaches!
+    Using all the predictors and the PCA predictors have the same accuracy's (.81), while those that PC1 deem as "important" only has an accuracy of .5.
