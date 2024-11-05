@@ -1,0 +1,263 @@
+---
+title: "Principal Components Analysis"
+author: "Andrew Kerr"
+format: 
+  html:
+    code-fold: true
+    code-line-numbers: true
+    code-tools: true
+    self-contained: true
+editor: visual
+execute:
+  message: false
+---
+
+## Setup
+
+Declare your libraries:
+
+```{r}
+#| label: libraries-r
+#| include: false
+library(tidyverse)
+library(tidymodels)
+library(glmnet)
+library(discrim)
+library(rpart)
+library(rpart.plot)
+library(baguette)
+```
+
+## Data Prep
+
+```{r}
+cann <- read_csv("https://www.dropbox.com/s/s2a1uoiegitupjc/cannabis_full.csv?dl=1") %>% 
+  drop_na()
+
+cann_matrix <- cann %>%
+  select(-Type, -Strain, -Effects, -Flavor, -Dry, -Mouth) %>%
+  as.matrix()
+
+cann_types <- cann %>% 
+  pull(Type)
+```
+
+## Relevant code from Lecture
+
+(You will need to change this for the Cannabis data!)
+
+```{r}
+#| eval: false
+
+fed %>%
+  ggplot(mapping = aes(x = there, y = would, color = Author)) +
+  geom_point()
+```
+
+PCA:
+
+```{r}
+pc <- prcomp(cann_matrix, 
+             center = TRUE, 
+             scale = TRUE)
+```
+
+Combinations of variables that create new axes:
+
+```{r}
+pc$rotation
+```
+
+Check out most important PCs:
+
+```{r}
+pc$rotation %>% 
+  data.frame() %>%
+  arrange(
+    desc(
+      abs(PC1)
+      )
+    )
+```
+
+Make a dataframe with PCs as columns:
+
+```{r}
+new_dims_df <- pc$x %>%
+  as.data.frame() %>% 
+  bind_cols(cann_types) %>% 
+  rename(Type = `...64`)
+
+new_dims_df
+```
+
+Plot first two PC dims:
+
+```{r}
+new_dims_df %>%
+  ggplot(mapping = aes(x = PC1, y = PC2, color = Type)) +
+  geom_point()
+```
+
+Standard deviations and variances:
+
+```{r}
+pc$sdev
+```
+
+```{r}
+cumul_vars <- cumsum(pc$sdev^2)/sum(pc$sdev^2)
+cumul_vars
+```
+
+## Try it!
+
+1.  Apply PCA to the cannabis data
+
+2.  Interpret the PC rotations
+
+    ```{r}
+    pc$rotation[,'PC1'] %>% sort()
+    ```
+
+    Sleepy, relaxed, and energetic spread the data out the most in PC1. Strands that are relaxed tend to also be sleepy (seen since they both have the same sign). On the other hand, knowing if a strand is Plum does not help spread the data.
+
+3.  Plot the data on the first two axes, and color by Type.
+
+    ```{r}
+    new_dims_df %>%
+      ggplot(mapping = aes(x = PC1, y = PC2, color = Type)) +
+      geom_point()
+    ```
+
+4.  Choose a "good" number of PCs to use.
+
+    ```{r}
+    cumul_vars
+    ```
+
+    If we want to explain 80% of the variation, then we can use 41 PCs.
+
+5.  Fit a KNN classifier using:
+
+    ```{r}
+    #| label: knn-k-function
+
+    find_k <- function(k_grid, data_cv, mod, rec, rec_name) {
+      
+      rec_wflow <- workflow() %>%
+        add_recipe(rec) %>%
+        add_model(mod)
+      
+      knn_grid_search <-
+        tune_grid(
+          rec_wflow,
+          resamples = data_cv,
+          grid = k_grid
+        )
+
+      metrics <- collect_metrics(knn_grid_search) %>% 
+        filter(.metric == 'roc_auc')
+
+      data.frame(
+        Recipe = rec_name,
+        ROC_AUC = metrics$mean,
+        k = metrics$neighbors)
+
+    }
+    ```
+
+    ```{r}
+    #| label: model-fit-function
+
+    fit_model <- function(data, data_cv, mod, rec, rec_name) {
+      
+      rec_wflow <- workflow() %>%
+        add_recipe(rec) %>%
+        add_model(mod)
+      
+      rec_fit <- rec_wflow %>% fit(data)
+      rec_fit_cv <- rec_wflow %>% fit_resamples(data_cv)
+      
+      roc_auc <- collect_metrics(rec_fit_cv) %>% filter(.metric == 'roc_auc') %>% pull(mean)
+
+      pred_output <- data %>%
+        mutate(predicted_response = predict(rec_fit, .)$.pred_class) 
+      
+      conf_matrix <- pred_output %>%
+        conf_mat(truth = preference, estimate = predicted_response) %>%
+        tidy() %>%
+        pivot_wider(names_from = name, values_from = value)
+      
+      tp <- conf_matrix$cell_1_1[1]
+      fp <- conf_matrix$cell_1_2[1]
+      fn <- conf_matrix$cell_2_1[1]
+      tn <- conf_matrix$cell_2_2[1]
+
+      data.frame(
+        Recipe = rec_name,
+        ROC_AUC = roc_auc,
+        TN = tn,
+        FP = fp,
+        FN = fn,
+        TP = tp,
+        Precision = precision(pred_output, truth = preference, estimate = predicted_response)$.estimate,
+        Recall = recall(pred_output, truth = preference, estimate = predicted_response)$.estimate
+      )
+      
+    }
+    ```
+
+    ```{r}
+    recipe_all <- recipe(Type ~ ., data = cann) %>%
+      step_rm(Strain, Rating)
+    recipe_important <- recipe(Type ~ Sleepy + Relaxed + Energetic + Creative + Hungry, data = cann) %>%
+      step_rm(Strain, Rating)
+    recipe_PCA <- recipe(Type ~ ., data = cann) %>%
+      step_rm(Strain, Rating) %>%
+      step_pca(threshold = 0.8)
+
+    recipes <- list('ALL' = recipe_all, 
+                    'IMPORTANT' = recipe_important, 
+                    'PCA' = recipe_PCA)
+
+    cann_cvs <- vfold_cv(cann, v = 10)
+
+    k_grid <- grid_regular(neighbors(),
+                           levels = 2)
+
+    knn_mod_tune <- nearest_neighbor(neighbors = tune()) %>%
+      set_engine("kknn") %>%
+      set_mode("classification")
+
+    results_knn_k <- list_rbind(map2(recipes, names(recipes), ~find_k(k_grid, cann_cvs, knn_mod_tune, .x, .y)))
+
+    best_k <- results_knn_k %>%
+      group_by(Recipe) %>%
+      slice(which.max(ROC_AUC)) %>%
+      ungroup()
+
+    results_knn <- list_rbind(map2(test_recipes, names(test_recipes), ~{
+      
+      cur_k <- best_k %>% filter(Recipe == .y) %>% pull(k)
+      
+      knn_mod <- nearest_neighbor(neighbors = cur_k) %>%
+      set_engine("kknn") %>%
+      set_mode("classification")
+      
+      fit_model(ha_clean, ha_cv, knn_mod, .x, .y) %>% mutate(k = cur_k)
+      
+      }))
+
+    results_knn %>% slice_max(Accuracy, n = 5)
+    ```
+
+6.  All the variables
+
+7.  Only the 5 most important variables according to PCA
+
+8.  Only your chosen PCs
+
+<!-- -->
+
+6.  Compare the accuracy of these three approaches!
