@@ -1,0 +1,332 @@
+---
+title: "Clustering"
+author: "Andrew Kerr"
+format: 
+  html:
+    code-fold: true
+    code-line-numbers: true
+    code-tools: true
+embed-resources: true
+editor: source
+execute:
+  message: false
+---
+
+## Setup
+
+Declare your libraries:
+
+```{r}
+#| label: libraries-r
+#| include: false
+
+library(tidyverse)
+library(tidymodels)
+library(tidyclust)
+library(glmnet)
+library(discrim)
+library(rpart)
+library(rpart.plot)
+library(baguette)
+```
+
+## Data Prep
+
+```{r}
+#| label: data-read-clean
+
+cann <- read_csv("https://www.dropbox.com/s/s2a1uoiegitupjc/cannabis_full.csv?dl=1") %>% 
+  drop_na()
+
+cann_matrix <- cann %>%
+  select(-Type, -Strain, -Effects, -Flavor, -Dry, -Mouth) %>%
+  as.matrix()
+
+cann_types <- cann %>% 
+  pull(Type)
+```
+
+# K-Means
+
+## Code from Lecture
+
+**Fitting K-means**
+```{r}
+#| label: fitting-k-means
+#| echo: false
+#| eval: false
+
+fed_km <- kmeans(fed_matrix, centers = 3)
+
+fed_km$centers
+
+fed_km$totss
+fed_km$withinss
+fed_km$betweenss
+
+res <- tibble(
+  clust = fed_km$cluster, 
+  auth = auths_known)
+
+res %>% 
+  count(clust, auth)
+
+### OR Tidyclust:
+library(tidyclust)
+
+km_spec <- k_means(num_clusters = 3)
+fed_recipe <- recipe(~., data = fed_known) |>
+  step_rm(Author)
+
+fed_km_wflow <- workflow() |>
+  add_recipe(fed_recipe) |>
+  add_model(km_spec)
+
+km_fitted <- fed_km_wflow |> fit(fed_known)
+
+km_fitted |> extract_cluster_assignment()
+
+km_fitted |> extract_centroids()
+```
+
+**Using PCA with K-means**
+```{r}
+#| label: pca-with-k-means
+#| echo: false
+#| eval: false
+
+pc <- prcomp(fed_matrix, center = TRUE, scale = TRUE)
+
+fed_reduced <- pc$x[, 1:2]
+
+fed_pca_km <- kmeans(fed_reduced, 3)
+
+res <- tibble(
+  clust = fed_pca_km$cluster, 
+  auth = auths_known)
+
+res %>% 
+  count(clust, auth)
+```
+
+Or, tidyclust version:
+
+```{r}
+fed_recipe_pca <- recipe(~., data = fed_known) |>
+  step_rm(Author) |>
+  step_pca(num_comp = 2)
+
+fed_km_wflow_pca <- workflow() |>
+  add_recipe(fed_recipe_pca) |>
+  add_model(km_spec)
+
+km_fitted_pca <- fed_km_wflow_pca |> fit(fed_known)
+
+fed_known |>
+  mutate(
+    clusters = extract_cluster_assignment(km_fitted_pca)$.cluster
+  ) |>
+  count(clusters, Author)
+```
+
+## Try it!
+
+1. Apply k-means clustering to the cannabis data using *all* the word predictors.
+
+```{r}
+library(tidyclust)
+
+cann_clean <- cann %>%
+  select(-Strain, -Effects, -Flavor, -Dry, -Mouth, -Rating)
+
+km_spec <- k_means(num_clusters = 3)
+
+cann_recipe <- recipe(~., data = cann_clean) %>%
+  step_rm(Type)
+
+cann_km_wflow <- workflow() |>
+  add_recipe(cann_recipe) |>
+  add_model(km_spec)
+
+km_fitted <- cann_km_wflow |> fit(cann_clean)
+
+km_fitted |> extract_centroids()
+```
+
+2. What was the within and between sum of squares?
+
+```{r}
+library(magrittr)
+
+km_fitted %>% 
+  extract_fit_engine() %$%
+  withinss
+
+km_fitted %>% 
+  extract_fit_engine() %$%
+  betweenss
+```
+
+3. Did the clusters match up with the Type?
+
+```{r}
+results <- cann_clean |>
+  mutate(
+    clusters = extract_cluster_assignment(km_fitted)$.cluster
+  ) |>
+  count(clusters, Type)
+
+results
+```
+
+Nope!
+
+Now, refer back to your PCA analysis of the cannabis data (from Monday).
+
+4. Apply k-means clustering to the **second and third** PC only
+
+```{r}
+recipe_PCA <- recipe(~.,
+                     data = cann_clean) %>%
+  step_rm(Type) %>%
+  step_scale(all_predictors()) %>%
+  step_center(all_predictors()) %>%
+  step_pca(all_predictors(),
+           num_comp = 3) %>%
+  step_rm(PC1)
+
+pca_recipe <- recipe(~., data = cann_reduced)
+
+cann_km_wflow <- workflow() |>
+  add_recipe(recipe_PCA) |>
+  add_model(km_spec)
+
+km_fitted <- cann_km_wflow |> fit(cann_clean)
+
+km_fitted |> extract_centroids()
+
+cann_clean |>
+  mutate(
+    clusters = extract_cluster_assignment(km_fitted)$.cluster
+  ) |>
+  count(clusters, Type)
+```
+
+5. Plot these clusters.  What do you think they capture?
+
+```{r}
+recipe_PCA_bake <- recipe(~.,
+                     data = cann_clean) %>%
+  step_rm(Type) %>%
+  step_scale(all_predictors()) %>%
+  step_center(all_predictors()) %>%
+  step_pca(all_predictors(),
+           num_comp = 3) %>%
+  step_rm(PC1) %>%
+  prep()
+
+PCs <- bake(recipe_PCA_bake, cann_clean)
+
+km_fitted %>% 
+  extract_cluster_assignment() %>%
+  ggplot() +
+    geom_point(aes(x = PCs$PC2, y = PCs$PC3, color = .cluster)) +
+  theme_bw() +
+  labs(x = 'PC2', y = 'PC3', color = 'Cluster')
+```
+
+# Hierarchical Clustering 
+
+## More code from class
+
+```{r}
+#| label: hierarchical-clustering
+#| eval: false
+#| echo: false
+fed_hc <- fed_matrix %>% 
+  scale() %>% 
+  dist() %>% 
+  hclust()
+
+plot(fed_hc, labels = fed_known$auths)
+```
+
+```{r}
+#| label: cutting-based-on-clusters
+#| echo: false
+#| eval: false
+
+res_hc <- cutree(fed_hc, k = 3)
+
+tibble(
+  clust = res_hc,
+  auth = fed_known$auths
+) %>%
+  count(clust, auth)
+```
+
+```{r}
+#| label: cutting-based-on-height
+#| echo: false
+#| eval: false
+
+res_hc_2 <- cutree(fed_hc, 
+                   h = 0.05)
+
+tibble(
+  clust = res_hc_2,
+  auth = auths_known
+) %>%
+  count(clust, auth)
+```
+
+Or, tidyclust:
+
+```{r}
+hc_spec <- hier_clust(
+  num_clusters = 3,
+  linkage_method = "average"
+)
+```
+
+
+
+
+
+## Try it!
+
+1. Apply hierarchical clustering to the cannabis data
+
+```{r}
+hc_spec <- hier_clust(
+  num_clusters = 3,
+  linkage_method = "average"
+)
+
+cann_recipe <- recipe(~., data = cann_clean) %>%
+  step_rm(Type)
+
+cann_hc_wflow <- workflow() |>
+  add_recipe(cann_recipe) |>
+  add_model(hc_spec)
+
+hc_fitted <- cann_hc_wflow |> fit(cann_clean)
+
+hc_fitted |> extract_centroids()
+```
+
+2. Compare your results to k-means. 
+
+```{r}
+results
+
+cann_clean |>
+  mutate(
+    clusters = extract_cluster_assignment(hc_fitted)$.cluster
+  ) |>
+  count(clusters, Type)
+```
+
+3. Which method do you prefer?  Why?
+
+kmeans did a better job separating the Types into different clusters, although both did bad... I think if we used more clusters, we might get better results
