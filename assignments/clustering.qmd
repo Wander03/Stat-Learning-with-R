@@ -10,7 +10,7 @@ format:
 editor: visual
 execute:
   message: false
-  eval: false
+  eval: true
 ---
 
 # Setup
@@ -20,11 +20,14 @@ execute:
 #| include: false
 library(tidyverse)
 library(tidymodels)
+library(tidyclust)
 library(glmnet)
 library(discrim)
 library(rpart)
 library(rpart.plot)
 library(baguette)
+library(magrittr)
+library(kableExtra)
 ```
 
 # Dataset: Spotify Song Attributes
@@ -46,48 +49,232 @@ songs_matrix <- as.matrix(songs) %>%
 
 This dataset contains measurements of various musical / acoustic attributes for songs released between 1999 and 2019. The songs are by 14 unique popular artists, with 100 songs per artist in the dataset.
 
+# Functions
+
+```{r}
+#| label: test-k-function
+
+fit_kmeans <- function(data, recipe, k, counts = F) {
+
+  km_spec <- k_means(num_clusters = k)
+  
+  km_wflow <- workflow() %>%
+    add_recipe(recipe) %>%
+    add_model(km_spec)
+  
+  km_fitted <- km_wflow %>% fit(data)
+
+  engine_fit <- km_fitted %>% 
+    extract_fit_engine()
+  
+  df_results <- data.frame(
+    k = k,
+    Cluster = paste0("Cluster_", seq(1:k)),
+    Withiness = engine_fit$withinss,
+    Betweenss = engine_fit$betweenss,
+    Total_Withiness = engine_fit$tot.withinss
+  ) %>% pivot_wider(names_from = Cluster, values_from = Withiness)
+  
+  if(counts) {
+    
+    df_counts <- data.frame(
+      k = k,
+      extract_cluster_assignment(km_fitted) %>%
+        group_by(.cluster) %>%
+        count()
+    ) %>% pivot_wider(names_from = .cluster, values_from = n)
+    
+    return(list(results = df_results, counts = df_counts))
+    
+  }
+    
+  return(results = df_results)
+  
+}
+```
+
 # Part One: PCA + K-means
 
 ## K-means without PCA
 
 **Question 1** -- Apply the K-means clustering algorithm to the data, with k = 3, k = 5, and k = 7.
 
+```{r}
+#| label: Q1
+
+song_recipe <- recipe(~., data = songs_matrix)
+
+k_lst <- seq(3, 7, 2)
+
+kmeans_results <- list_rbind(map(k_lst, ~fit_kmeans(songs_matrix, song_recipe, .x)))
+```
+
 **Question 2** -- Which of these do you think is the best clustering choice? Make an argument based on the *sum of squared distances* between and within clusters.
+
+```{r}
+#| label: Q2
+
+kmeans_results %>%
+  kable()
+```
+
+I think that the best choice of k would be 7. The BSS value is greatest for 7, indicating that this value of k provided the most separation between clusters (well-separated clusters). Additionally, the Total WSS is the lowest for k = 7, meaning that the clusters are more compact than the clusters for k = 3 and 5.  
 
 ## PCA
 
 **Question 3** -- Perform a Principal Components Analysis on this data.
 
+```{r}
+#| label: Q3
+
+song_recipe_pca <- song_recipe %>%
+  step_pca(all_predictors()) %>%
+  prep()
+
+song_pcs <- song_recipe_pca %>% 
+  tidy(number = 1)
+
+song_pca_output <- song_recipe_pca %$%
+  steps %>% 
+  pluck(1) %$%
+  res
+```
+
 **Question 4** -- Which variables best spread the data?
+
+```{r}
+#| label: Q4
+
+song_pcs %>%
+  filter(component == 'PC1') %>%
+  slice_max(abs(value), n = 5) %>%
+  select(terms, value) %>%
+  kable()
+```
+
+Energy, Loudness, and Acousticness best spread the data! Since energy and loudness both have high positive loading values in PC1, we can say that songs that are high energy also tend to be loud, and vice versa. Meanwhile, a low negative loading value for acousticness indicates loud and energetic songs tend to be less acoustic. 
 
 **Question 5** -- How many PCs would we need to use to recover 80% of the total variance in the data? 90%?
 
+```{r}
+#| label: Q5
+
+song_pca_output %$%
+  sdev %>%
+  {cumsum(.^2) / sum(.^2)}
+```
+
+We would need at least 8 PCs to recover 80% of the total variance and at least 10 for 90%.
+
 **Question 6** -- Craft a "real-world" interpretation of the first two Principal Components. (For example, in our practice data, we might have said "The first component measure Type, and the second component measures"Blueberryness".)
 
+```{r}
+#| label: Q6
+
+song_pca_output %$%
+  rotation[, c('PC1', 'PC2')] %>%
+  kable()
+```
+
+- PC1: Measures how loud and energetic a song is. High values indicate a loud energetic song, such as a pop song, while low values indicate a more acoustic and instrumental song, such as a classical song.
+
+- PC2: Measures how danceable and "talkative" a song is. High values would indicate a higher tempo song with less vocals, while lower values indicate a song with more vocals and explicit words.
+
 **Question 7** -- Plot the observations in the first two PCs
+
+```{r}
+#| label: Q7
+
+song_recipe_pca %>%
+  bake(songs_matrix) %>% 
+  ggplot(aes(x = PC1, y = PC2)) +
+    geom_point() +
+  theme_bw() +
+  labs(title = 'Scatter Plot of Songs')
+```
 
 ## K-means plus PCA
 
 **Question 8** -- Make a choice for how many PCs to use, based on the results of Q5.
 
+I will use 9 PCs to recover over 85% of the total variance (87.89% to be exact).
+
 **Question 9** -- Apply K-means using those dimensions only.
 
+```{r}
+#| label: Q9
+
+song_recipe_pca_9 <- song_recipe %>%
+  step_pca(all_predictors(),
+           num_comp = 9)
+```
+
 **Question 10** -- Try a few values of k, and make an argument for the best one.
+
+```{r}
+#| label: Q10
+
+set.seed(123)
+
+k_lst <- seq(2, 10, 2)
+
+results_lst <- map(k_lst, ~fit_kmeans(songs_matrix, song_recipe_pca_9, .x, T))
+results_df <- map(results_lst, 'results') %>% bind_rows()
+counts_df <- map(results_lst, 'counts') %>% bind_rows()
+
+results_df %>%
+  kable()
+
+counts_df %>%
+  kable()
+```
+
+I believe that k = 6 is the best choice. The amount of observations per cluster is at least 90 and the difference of BSS between k = 4 and k = 6 is a large jump, while the increase from k = 6 to k = 8 is not very large. Together, these indicate that we are getting more distinct clusters without them becoming too fragmented. Additionally, the Total WSS decreases from k = 4 to k = 6, indicating that the clusters are more compact. 
 
 ## Plotting the Results
 
 **Question 11** -- Plot the observations in the first two PCs, and color them by their assigned clusters in Q3.
 
+```{r}
+#| label: Q11
+
+km_spec <- k_means(num_clusters = 6)
+  
+km_wflow <- workflow() %>%
+  add_recipe(song_recipe_pca_9) %>%
+  add_model(km_spec)
+
+km_fitted <- km_wflow %>% 
+  fit(songs_matrix)
+
+km_clusters <- km_fitted %>% 
+  extract_cluster_assignment()
+
+song_recipe_pca %>%
+  bake(songs_matrix) %>% 
+  mutate(cluster = km_clusters$.cluster) %>%
+  ggplot(aes(x = PC1, y = PC2, color = cluster)) +
+    geom_point() +
+  theme_bw() +
+  labs(title = 'Scatter Plot of Songs',
+       subtitle = 'Clustered by k Means using k = 8',
+       color = 'Cluster')
+```
+
 ## Interpreting the Results
 
 **Question 12** -- Does this clustering seem to be capturing real structure?
 
+The clustering does seem to be capturing real structure. Although it is difficult to see with only 2 axis (since the model used 9 PCs), I can clearly see at least 4 distinct clusters, with one of these clusters being an overlap of three different clusters on this plane (clusters 2, 5, and 6).
+
 **Question 13** -- Run the code below (using your own k-means result object) to find the average values of each variable in each cluster.
 
 ```{r}
-songs %>%
+#| label: Q13
+
+cluster_means <- as.data.frame(songs_matrix) %>%
   mutate(
-    cluster = km$cluster
+    cluster = km_clusters$.cluster
   ) %>%
   group_by(cluster) %>%
   summarize(
@@ -95,11 +282,32 @@ songs %>%
            .fns = ~ mean(.x)
            )
     )
+
+cluster_means_long <- cluster_means %>%
+  pivot_longer(cols = Acousticness:Mode, names_to = 'Feature', values_to = 'Mean')
+
+cluster_means_long %>%
+  ggplot(aes(x = Feature, y = cluster, fill = Mean)) +
+    geom_tile() +
+    scale_fill_viridis_c() +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1), 
+          axis.title.x = element_blank()) +
+    labs(title = 'Feature Mean Values by Cluster',
+         y = 'Cluster',
+         fill = 'Scaled Mean')
 ```
 
 What real-world qualities do you think define each cluster?
 
 (For example, you might say, "The songs in cluster 1 all have high speechiness, and low instrumentalness, so they might be rap.)
+
+- Cluster 1: Shorter songs with very high acoustics with low energy and loudness
+- Cluster 2: Songs with more minor modes 
+- Cluster 3: Non-explicit songs with higher dancability
+- Cluster 4: Low energy songs with low dancability, liveness, and loudness and lots of instrumentals
+- Cluster 5: Songs with very high liveness and low dancability, most likely any songs performed in front of a live audience
+- Cluster 6: Songs with more major modes and higher energy and loudness
 
 # Part Two: Hierarchical Clustering
 
@@ -107,21 +315,95 @@ What real-world qualities do you think define each cluster?
 
 **Question 14** -- Perform a hierarchical clustering on the songs data, and plot the dendrogram.
 
+```{r}
+#| label: Q14
+
+songs_hc <- songs_matrix %>% 
+  dist() %>% 
+  hclust()
+
+plot(songs_hc, labels = F, main = 'Hierarchical Clustering of Songs')
+abline(h = 9, col = "firebrick")
+```
+
 ## Cluster Assignments
 
 **Question 15** -- Choose a cutoff for the dendrogram, and justify your choice.
 
+I will cutoff the dendrogram at a height of 9 because this makes sure that I do not have smaller clusters (if I go any lower I will have a cluster of size 1) and this is low enough that the clusters on the right side of the dendrogram have not merged into 1 cluster (they are still 2).
+
 **Question 16** -- Produce the cluster assignments for each song based on that cutoff.
+
+```{r}
+#| label: Q16
+
+hc_spec <- hier_clust(
+  cut_height = 9,
+  linkage_method = "complete"
+)
+
+hc_wflow <- workflow() %>%
+  add_recipe(song_recipe) %>%
+  add_model(hc_spec)
+
+hc_fitted <- hc_wflow %>%
+  fit(songs_matrix)
+
+hc_clusters <- hc_fitted %>%
+  extract_cluster_assignment()
+```
 
 ## Interpreting the Results
 
 **Question 17** -- Use the same code as in Q13 to examine your resulting clusters and interpret them.
+
+```{r}
+#| label: Q17
+
+cluster_means <- as.data.frame(songs_matrix) %>%
+  mutate(
+    cluster = hc_clusters$.cluster
+  ) %>%
+  group_by(cluster) %>%
+  summarize(
+    across(.cols = Acousticness:Valence, 
+           .fns = ~ mean(.x)
+           )
+    )
+
+cluster_means_long <- cluster_means %>%
+  pivot_longer(cols = Acousticness:Mode, names_to = 'Feature', values_to = 'Mean')
+
+cluster_means_long %>%
+  ggplot(aes(x = Feature, y = cluster, fill = Mean)) +
+    geom_tile() +
+    scale_fill_viridis_c() +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1), 
+          axis.title.x = element_blank()) +
+    labs(title = 'Feature Mean Values by Cluster',
+         y = 'Cluster',
+         fill = 'Scaled Mean')
+```
+
+
+- Cluster 1: Has songs that are average across all features
+- Cluster 2: Shorter songs with high acousticness and low loudness, energy, and danceability
+- Cluster 3: Longer songs with low energy
+- Cluster 4: Short songs with low loudness and energy and high acousticness and above average liveness
+- Cluster 5: Songs with high acousticness and mode with lower dancability and energy
+- Cluster 6: Higher energy songs with instramentals and loudness
+- Cluster 7: Very acoustic songs with very low dancability, duration, energy, and loudness
+- Cluster 8: Extremely long songs with instramentals, liveness, and energy
+- Cluster 9: Very instramental songs with low loudness, mode and energy
+- Cluster 10: Songs with lots of instramentals and acousticness and low loudness, energy, and danceability
 
 # Part Three: Verification
 
 Now, use the following code to load the name, artist, and album of each song. (This data is in the same order as your original `songs` and `songs_matrix` data, of course.)
 
 ```{r}
+#| message: false
 songs_full <- read_csv("https://www.dropbox.com/s/5ke5fi3hlu0f02w/top_artists_spotify.csv?dl=1")
 ```
 
@@ -130,9 +412,21 @@ Use the following code to see which artists were in which cluster:
 ```{r}
 songs_full %>%
   mutate(
-    cluster = km$cluster
+    cluster = km_clusters$.cluster
   ) %>%
-  count(cluster, Artist)
+  count(cluster, Artist) %>%
+  arrange(cluster, -n)
+
+songs_full %>%
+  mutate(
+    cluster = hc_clusters$.cluster
+  ) %>%
+  count(cluster, Artist) %>%
+  arrange(cluster, -n)
 ```
 
 Refer back to your cluster interpretations at the end of Parts One (Q13) and Two (Q17). Did they turn out to be correct? That is, do the styles of the artists that are most represented in a particular cluster seem to match your predictions?
+
+- K Means: Cluster 3 is comprised of non-explicit songs, however artists who tend to make explicit songs are in this cluster so it does not seem correct. Otherwise, the other clusters appear to match the cluster assignments from K means.
+
+- Hierarchical: Cluster 3 has long, low energy songs, but the artist in the cluster (drake and nicki minaj) do not make this type of music. The rest roughly fit the artists in them, especially the first cluster which sees average values across all features being comprised of a roughly equal amount of all artists. This tree might have been cut off with not enough clusters since this cluster exists, however cutting off any earlier would result in a lot of very small clusters.

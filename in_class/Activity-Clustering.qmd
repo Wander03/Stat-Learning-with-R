@@ -112,6 +112,8 @@ res %>%
 Or, tidyclust version:
 
 ```{r}
+#| echo: false
+#| eval: false
 fed_recipe_pca <- recipe(~., data = fed_known) |>
   step_rm(Author) |>
   step_pca(num_comp = 2)
@@ -195,7 +197,7 @@ recipe_PCA <- recipe(~.,
            num_comp = 3) %>%
   step_rm(PC1)
 
-pca_recipe <- recipe(~., data = cann_reduced)
+pca_recipe <- recipe(~., data = cann_clean)
 
 cann_km_wflow <- workflow() |>
   add_recipe(recipe_PCA) |>
