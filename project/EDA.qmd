@@ -1,0 +1,69 @@
+---
+title: "Final Project"
+author: "Lily Cook, Andrew Kerr, Daniel Erro"
+format: html
+editor: visual
+embed-resources: true
+---
+
+```{r}
+#| label: libraries
+#| message: false
+
+library(tidyverse)
+library(here)
+library(tidymodels)
+library(tidyclust)
+```
+
+# College Rankings
+
+## Data Read-in
+
+```{r}
+#| label: rankings-read-in
+#| message: false
+
+rank <- read_csv(here('project', 'data', 'news_college_rankings_1984_2025.csv'))
+```
+
+## Data Cleaning
+
+```{r}
+#| label: rankings-cleaning
+
+rank %>%
+  summarise(across(everything(), ~ round(sum(is.na(.)) / nrow(rank), 2))) %>%
+  pivot_longer(cols = everything(), 
+               names_to = 'Column', 
+               values_to = 'Proportion Missing')
+```
+
+# College Scorecard
+
+## Data Read-in
+
+```{r}
+#| label: scorecard-read-in
+#| message: false
+
+card <- read_csv(here('project', 'data', 'Most-Recent-Cohorts-Institution.csv'))
+```
+
+NOTES: 
+- What year variable values are from: CollegeScorecardDataDirectory > Most_Recent_Inst_Cohort_Map 
+- What each variable means: Technical Documentation: College Scorecard Institution-Level Data 
+  - They generalized the names, so search for just the first part of each variable
+
+## Data Cleaning
+
+```{r}
+#| label: card-cleaning
+
+card %>%
+  summarise(across(everything(), ~ round(sum(is.na(.)) / nrow(card), 2))) %>%
+  pivot_longer(cols = everything(), 
+               names_to = 'Column', 
+               values_to = 'Proportion_Missing') %>%
+  arrange(-Proportion_Missing)
+```
