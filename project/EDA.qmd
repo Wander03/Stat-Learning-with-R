@@ -67,3 +67,20 @@ card %>%
                values_to = 'Proportion_Missing') %>%
   arrange(-Proportion_Missing)
 ```
+
+
+```{r}
+r_lst <- rank %>%
+  select(Name) %>%
+  unique()
+
+c_lst <- card %>%
+  select(INSTNM) %>%
+  unique()
+
+nrow(r_lst)
+nrow(c_lst)
+
+nrow(left_join(r_lst, c_lst, by = join_by(Name == INSTNM)))
+```
+
