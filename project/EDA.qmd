@@ -14,6 +14,7 @@ library(tidyverse)
 library(here)
 library(tidymodels)
 library(tidyclust)
+library(magrittr)
 ```
 
 # College Rankings
@@ -66,10 +67,22 @@ card %>%
                names_to = 'Column', 
                values_to = 'Proportion_Missing') %>%
   arrange(-Proportion_Missing)
+
+# Filter to only those on the ranking list? Dont know why there are dups even of main campuses
+card %>%
+  filter(MAIN == 1) %>%
+  group_by(INSTNM) %>%
+  count() %>%
+  arrange(-n)
+
+card %>%
+  filter(INSTNM == 'Cortiva Institute')
 ```
 
 
 ```{r}
+#| label: check-join
+
 r_lst <- rank %>%
   select(Name) %>%
   unique()
@@ -82,5 +95,80 @@ nrow(r_lst)
 nrow(c_lst)
 
 nrow(left_join(r_lst, c_lst, by = join_by(Name == INSTNM)))
+```
+
+# Functions
+
+```{r}
+#| label: test-k-function
+
+fit_kmeans <- function(data, recipe, k, counts = F) {
+
+  km_spec <- k_means(num_clusters = k)
+  
+  km_wflow <- workflow() %>%
+    add_recipe(recipe) %>%
+    add_model(km_spec)
+  
+  km_fitted <- km_wflow %>% fit(data)
+
+  engine_fit <- km_fitted %>% 
+    extract_fit_engine()
+  
+  df_results <- data.frame(
+    k = k,
+    Cluster = paste0("Cluster_", seq(1:k)),
+    Withiness = engine_fit$withinss,
+    Betweenss = engine_fit$betweenss,
+    Total_Withiness = engine_fit$tot.withinss
+  ) %>% pivot_wider(names_from = Cluster, values_from = Withiness)
+  
+  if(counts) {
+    
+    df_counts <- data.frame(
+      k = k,
+      extract_cluster_assignment(km_fitted) %>%
+        group_by(.cluster) %>%
+        count()
+    ) %>% pivot_wider(names_from = .cluster, values_from = n)
+    
+    return(list(results = df_results, counts = df_counts))
+    
+  }
+    
+  return(results = df_results)
+  
+}
+```
+
+# KMeans
+
+```{r}
+#| label: kmeans
+
+card_recipe_pca <- recipe(~., data = card %>% select(where(is.numeric))) %>%
+  # update_role(INSTNM, new_role = "id") %>%
+  # step_rm(UNITID, OPEID, OPEID6, CITY, STABBR, ZIP, ACCREDAGENCY, INSTURL, NPCURL, MAIN, NUMBRANCH) %>%
+  step_select(where(~ !all(is.na(.)))) %>%
+  step_impute_mean(all_numeric()) %>%
+  step_zv(all_predictors()) %>%
+  # step_unknown(all_nominal()) %>%
+  # step_dummy(all_nominal()) %>%
+  step_center(all_numeric()) %>%
+  step_scale(all_numeric()) %>%
+  step_pca(all_numeric(), threshold = 0.8)
+
+test <- card_recipe_pca %$%
+  steps %>% 
+  pluck(7) %$%
+  res
+
+test$rotation[,'PC1']
+
+k_lst <- c(5)
+
+kmeans_results <- list_rbind(map(k_lst, ~fit_kmeans(card %>% select(where(is.numeric)), card_recipe_pca, .x)))
+
+kmeans_results
 ```
 
