@@ -15,6 +15,8 @@ library(here)
 library(tidymodels)
 library(tidyclust)
 library(magrittr)
+library(readxl)
+library(janitor)
 ```
 
 # College Rankings
@@ -25,7 +27,10 @@ library(magrittr)
 #| label: rankings-read-in
 #| message: false
 
-rank <- read_csv(here('project', 'data', 'news_college_rankings_1984_2025.csv'))
+rank <- read_xlsx(here('project', 
+                       'data', 
+                       'US-News-National-University-Rankings-Top-150-Through-2025.xlsx')) %>%
+  clean_names()
 ```
 
 ## Data Cleaning
@@ -36,8 +41,25 @@ rank <- read_csv(here('project', 'data', 'news_college_rankings_1984_2025.csv'))
 rank %>%
   summarise(across(everything(), ~ round(sum(is.na(.)) / nrow(rank), 2))) %>%
   pivot_longer(cols = everything(), 
-               names_to = 'Column', 
-               values_to = 'Proportion Missing')
+               names_to = 'Year', 
+               values_to = 'Proportion_Missing') %>%
+  arrange(-Proportion_Missing)
+
+rank %>%
+  select(-university_name, -state, -ipeds) %>%
+  summarise(across(everything(), ~ max(., na.rm = T))) %>%
+  pivot_longer(cols = everything(), 
+               names_to = 'year', 
+               values_to = 'max_rank') %>%
+  mutate(year = as.numeric(gsub("x", "", year))) %>%
+  ggplot() +
+  geom_col(aes(x = year, y = max_rank), fill = 'cornflowerblue') +
+  theme_bw() +
+  labs(x = "Year",
+       y = "Maximum Ranking",
+       title = "Maximum Rankning by Year")
+
+
 ```
 
 # College Scorecard
@@ -51,10 +73,7 @@ rank %>%
 card <- read_csv(here('project', 'data', 'Most-Recent-Cohorts-Institution.csv'))
 ```
 
-NOTES: 
-- What year variable values are from: CollegeScorecardDataDirectory > Most_Recent_Inst_Cohort_Map 
-- What each variable means: Technical Documentation: College Scorecard Institution-Level Data 
-  - They generalized the names, so search for just the first part of each variable
+NOTES: - What year variable values are from: CollegeScorecardDataDirectory \> Most_Recent_Inst_Cohort_Map - What each variable means: Technical Documentation: College Scorecard Institution-Level Data - They generalized the names, so search for just the first part of each variable
 
 ## Data Cleaning
 
@@ -68,33 +87,30 @@ card %>%
                values_to = 'Proportion_Missing') %>%
   arrange(-Proportion_Missing)
 
-# Filter to only those on the ranking list? Dont know why there are dups even of main campuses
-card %>%
-  filter(MAIN == 1) %>%
-  group_by(INSTNM) %>%
-  count() %>%
-  arrange(-n)
+joined_data <- left_join(rank, card, by = join_by(university_name == INSTNM))
 
-card %>%
-  filter(INSTNM == 'Cortiva Institute')
 ```
-
 
 ```{r}
 #| label: check-join
 
 r_lst <- rank %>%
-  select(Name) %>%
+  select(ipeds) %>%
   unique()
 
 c_lst <- card %>%
-  select(INSTNM) %>%
+  select(UNITID) %>%
   unique()
 
 nrow(r_lst)
 nrow(c_lst)
 
-nrow(left_join(r_lst, c_lst, by = join_by(Name == INSTNM)))
+nrow(inner_join(r_lst, c_lst, by = join_by(ipeds == UNITID)))
+anti_join(r_lst, c_lst, by = join_by(ipeds == UNITID))
+
+# Drop this observation because it is a branch of NYU that only existed separately for 3 years, and NYU is already in the dataset
+rank %>%
+  filter(ipeds == 194541)
 ```
 
 # Functions
@@ -165,10 +181,9 @@ test <- card_recipe_pca %$%
 
 test$rotation[,'PC1']
 
-k_lst <- c(5)
+k_lst <- c(5, 10)
 
 kmeans_results <- list_rbind(map(k_lst, ~fit_kmeans(card %>% select(where(is.numeric)), card_recipe_pca, .x)))
 
 kmeans_results
 ```
-
