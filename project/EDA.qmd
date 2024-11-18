@@ -99,7 +99,6 @@ rank %>%
   labs(x = "Year",
        y = "Maximum Ranking",
        title = "Maximum Ranking by Year")
-       title = "Maximum Rankning by Year")
 ```
 
 From the above table, we notice that the ranking for many colleges each year is NA, meaning that they were not ranked within the top 150 colleges that year. Additionally, each year the top 150 colleges were not ranked, but less. The histogram shows that in the 1900s, only the top 25 colleges were ranked, then in the 1996 this increased to the top 50. In 2004 the top 125 colleges were ranked, and this amount increased to 150 in 2011. The reason the maximum ranking is not 50, 100, or 150 exactly is because the metric used to rank these colleges could tie, in which case the tied colleges were assigned the same rank.
@@ -126,9 +125,6 @@ rank <- rank %>%
 ```
 
 ### College Scorecard
-
-NOTES: - What year variable values are from: CollegeScorecardDataDirectory \> Most_Recent_Inst_Cohort_Map - What each variable means: Technical Documentation: College Scorecard Institution-Level Data - They generalized the names, so search for just the first part of each variable
-
 
 ```{r}
 #| label: scorecard-read-in
