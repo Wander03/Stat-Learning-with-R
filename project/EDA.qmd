@@ -1,7 +1,15 @@
 ---
-title: "Final Project"
+title: "Project Phase 2: Project Proposal"
 author: "Lily Cook, Andrew Kerr, Daniel Erro"
-format: html
+format: 
+  html:
+    code-fold: true
+    toc: true
+    toc-title: "Outline"
+    toc-depth: 4
+    code-line-numbers: true
+    code-tools: true
+    self-contained: true
 editor: visual
 embed-resources: true
 ---
@@ -9,26 +17,63 @@ embed-resources: true
 ```{r}
 #| label: libraries
 #| message: false
+#| include: false
 
 library(tidyverse)
 library(here)
 library(tidymodels)
 library(tidyclust)
 library(magrittr)
+library(readxl)
+library(janitor)
 ```
 
-# College Rankings
+### NOTE
 
-## Data Read-in
+We are switching our primary and secondary goals for this data analysis project.
+
+-   New Primary Goal: Predict what a college's ranking is based on various predictor variables.
+-   New Secondary Goal: Cluster colleges together based on various predictor variables.
+
+# Project Proposal
+
+[Organization: Fair Opportunity Project](https://www.fairopportunityproject.org/)
+
+About FOP from their website: Fair Opportunity Project (Fair Opp) is a nationally-recognized, federally-funded education nonprofit. We aim to help students attend and afford college, while also exploring other opportunities post-high school.
+
+Every year, Fair Opp sends free college application advice to over 63,000 public educators via our guide. We also have over 100 college and financial aid mentors who help students maximize their aid, put together winning applications, and file the FAFSA.
+
+Fair Opp has been featured in Forbes 30 Under 30, the New York Times, and the Harvard Education Magazine.
+
+We are able to provide these resources through private and public donors, and we are happy to say they are all free.
+
+## Introduction
+
+The project focuses on helping students decide what college is best for them and making this decision more accessible. By predicting the rankings, students will have a better idea of how their school of choice will continue to perform throughout their education. This will assist your organization in the goal to help students attend college, as finding the right college is a vital part of the process of deciding to go to college. If students have a good idea of what schools will be right for them, then they are more likely to not only decide to go to college, but also stay in college. The project has the main goal of predicting what a college's ranking is based on various predictor variables and the secondary goal of clustering colleges together based on various predictor variables.
+
+The main dataset used for this analysis comes from the U.S. Department of Education. The government creates this dataset to provide students and educators with a comprehensive and accessible tool for evaluating and comparing U.S. colleges. This dataset contains numerous variables from over 6,000 colleges, sourced from federally reported information from the institutions. The dataset on college rankings for this project comes from US News & World Report, which generally is seen as a reliable source for college rankings and was compiled by Andrew Reiter. US News & World Report is a journalism company that creates these rankings to inform the general public, especially prospective college students. Ranks are determined based on various metrics including graduation rates, student debt, and student to faculty ratio to calculate the rankings. These ranks will be our target variable of our analysis. Both sets collect data on the college level. To prepare for this analysis, the two datasets will be joined and all colleges that are not featured in the rankings set will be dropped, leaving 188 total colleges in our analysis.
+
+This project will assist college-bound students in their decision of which college to attend. Additionally, this will hopefully assist students in determining how they will fund their attendance, as they will be able to see what type and amount of loan they may need to take out, along with the amount of money they can be expected to earn once graduating, ensuring that they pick a college that will not trap them in debt. This project could be biased against community colleges, as we are not including them in our analyses, but are still a viable option for students. This project will have minimal privacy and bias concerns, as all information is federally reported information about the schools as a whole, rather than individual students. To ensure ethical work, this project will be fully transparent on all methods, analyses and data sources.
+
+## Previous Work
+
+<https://www.usnews.com/education/best-colleges/articles/how-us-news-calculated-the-rankings>
+
+The U.S. News and World Report rank colleges based on 17 factors. This organization applies weights to these created factors based on how important they believe them to be. The similarity between our project and the U.S. News and World Report is that we are ranking colleges in the U.S. based on similar data, however our project will not be creating factors and weighing them, but using the raw data itself to generate the rankings. Additionally, we plan to determine what colleges are similar to each other through clustering, which is not something this organization does.
+
+## Exploratory Analysis
+
+### College Rankings
 
 ```{r}
 #| label: rankings-read-in
 #| message: false
 
-rank <- read_csv(here('project', 'data', 'news_college_rankings_1984_2025.csv'))
+rank <- read_xlsx(here('project', 
+                       'data', 
+                       'US-News-National-University-Rankings-Top-150-Through-2025.xlsx')) %>%
+  clean_names()
 ```
-
-## Data Cleaning
 
 ```{r}
 #| label: rankings-cleaning
@@ -37,67 +82,204 @@ rank %>%
   summarise(across(everything(), ~ round(sum(is.na(.)) / nrow(rank), 2))) %>%
   pivot_longer(cols = everything(), 
                names_to = 'Column', 
-               values_to = 'Proportion Missing')
+               values_to = 'Proportion_Missing') %>%
+  arrange(-Proportion_Missing)
+
+rank %>%
+  select(-university_name, -state, -ipeds) %>%
+  summarise(across(everything(), ~ max(., na.rm = T))) %>%
+  pivot_longer(cols = everything(), 
+               names_to = 'year', 
+               values_to = 'max_rank') %>%
+  mutate(year = as.numeric(gsub("x", "", year))) %>%
+  ggplot() +
+  geom_col(aes(x = year, y = max_rank), fill = 'cornflowerblue') +
+  theme_bw() +
+  labs(x = "Year",
+       y = "Maximum Ranking",
+       title = "Maximum Ranking by Year")
 ```
 
-# College Scorecard
+From the above table, we notice that the ranking for many colleges each year is NA, meaning that they were not ranked within the top 150 colleges that year. Additionally, each year the top 150 colleges were not ranked, but less. The histogram shows that in the 1900s, only the top 25 colleges were ranked, then in the 1996 this increased to the top 50. In 2004 the top 125 colleges were ranked, and this amount increased to 150 in 2011. The reason the maximum ranking is not 50, 100, or 150 exactly is because the metric used to rank these colleges could tie, in which case the tied colleges were assigned the same rank.
 
-## Data Read-in
+To preserve the data and utilize the most possible, we will focus on ranking the top 125 colleges, only use the years between 2004 and 2025. Observations which are NA or greater than 125 will be labeled "above 125" to indicate that they are/would have been ranked below the top 125 for that year.
+
+```{r}
+#| label: long-rank
+
+rank <- rank %>%
+  pivot_longer(
+    cols = starts_with("x"),
+    names_to = "year",
+    names_prefix = "x", 
+    values_to = "rank"
+  ) %>%
+  mutate(
+    year = as.numeric(year),
+    rank = ifelse(is.na(rank), "above 125", rank),
+    rank = factor(rank)
+    ) %>%
+  filter(year >= 2004) %>%
+  select(university_name, ipeds, year, rank)
+```
+
+### College Scorecard
 
 ```{r}
 #| label: scorecard-read-in
 #| message: false
+#| eval: false
 
-card <- read_csv(here('project', 'data', 'Most-Recent-Cohorts-Institution.csv'))
+card_02_03 <- read_csv(here('project', 'data', 'MERGED2002_03_PP.csv'))
+card_03_04 <- read_csv(here('project', 'data', 'MERGED2003_04_PP.csv'))
+card_04_05 <- read_csv(here('project', 'data', 'MERGED2004_05_PP.csv'))
+card_05_06 <- read_csv(here('project', 'data', 'MERGED2005_06_PP.csv'))
+card_06_07 <- read_csv(here('project', 'data', 'MERGED2006_07_PP.csv'))
+card_07_08 <- read_csv(here('project', 'data', 'MERGED2007_08_PP.csv'))
+card_08_09 <- read_csv(here('project', 'data', 'MERGED2008_09_PP.csv'))
+card_09_10 <- read_csv(here('project', 'data', 'MERGED2009_10_PP.csv'))
+card_10_11 <- read_csv(here('project', 'data', 'MERGED2010_11_PP.csv'))
+card_11_12 <- read_csv(here('project', 'data', 'MERGED2011_12_PP.csv'))
+card_12_13 <- read_csv(here('project', 'data', 'MERGED2012_13_PP.csv'))
+card_13_14 <- read_csv(here('project', 'data', 'MERGED2013_14_PP.csv'))
+card_14_15 <- read_csv(here('project', 'data', 'MERGED2014_15_PP.csv'))
+card_15_16 <- read_csv(here('project', 'data', 'MERGED2015_16_PP.csv'))
+card_16_17 <- read_csv(here('project', 'data', 'MERGED2016_17_PP.csv'))
+card_17_18 <- read_csv(here('project', 'data', 'MERGED2017_18_PP.csv'))
+card_18_19 <- read_csv(here('project', 'data', 'MERGED2018_19_PP.csv'))
+card_19_20 <- read_csv(here('project', 'data', 'MERGED2019_20_PP.csv'))
+card_20_21 <- read_csv(here('project', 'data', 'MERGED2020_21_PP.csv'))
+card_21_22 <- read_csv(here('project', 'data', 'MERGED2021_22_PP.csv'))
+card_22_23 <- read_csv(here('project', 'data', 'MERGED2022_23_PP.csv'))
+card_23_24 <- read_csv(here('project', 'data', 'Most-Recent-Cohorts-Institution.csv'))
 ```
-
-NOTES: 
-- What year variable values are from: CollegeScorecardDataDirectory > Most_Recent_Inst_Cohort_Map 
-- What each variable means: Technical Documentation: College Scorecard Institution-Level Data 
-  - They generalized the names, so search for just the first part of each variable
-
-## Data Cleaning
 
 ```{r}
 #| label: card-cleaning
+#| eval: false
 
-card %>%
-  summarise(across(everything(), ~ round(sum(is.na(.)) / nrow(card), 2))) %>%
+prop_na <- card_23_24 %>%
+  summarise(across(everything(), ~ round(sum(is.na(.)) / nrow(card_23_24), 2))) %>%
   pivot_longer(cols = everything(), 
                names_to = 'Column', 
                values_to = 'Proportion_Missing') %>%
   arrange(-Proportion_Missing)
 
-# Filter to only those on the ranking list? Dont know why there are dups even of main campuses
-card %>%
-  filter(MAIN == 1) %>%
-  group_by(INSTNM) %>%
-  count() %>%
-  arrange(-n)
-
-card %>%
-  filter(INSTNM == 'Cortiva Institute')
+prop_na
 ```
 
+We need scorecard data from past years to train our model on past years rankings. Since the Department of Education only supplies merged scorecards of past years, we will use the data for a given year and its following year to predict the next years ranking. For example, the rankings from 2006 will use the merged data from 2004 to 2005. For clustering, we will only use the most recent data from 2023 to 2024. 
+
+NOTES:
+
+-   What year variable values are from: CollegeScorecardDataDirectory \> Most_Recent_Inst_Cohort_Map
+
+-   What each variable means: [Technical Documentation: College Scorecard Institution-Level Data](https://collegescorecard.ed.gov/assets/InstitutionDataDocumentation.pdf)
+
+The 3,305 variables can be grouped into the following groupings:
+
+-   ABOUT INSTITUTION
+    -   Institution identifiers, location, degree type and profile, programs offered, and the academic profile of students enrolled
+-   ACADEMICS
+    -   Types of academic offerings available at each institution
+-   ADMISSIONS
+    -   Information that describes the admissions rate and SAT/ACT scores of students
+-   COSTS
+    -   Information about the costs to students of an institution
+-   STUDENTS AND STAFF
+    -   Demographic and other details about the student body and the staff of the institution
+-   FINANCIAL AID
+    -   Amount of debt that students can expect to borrow, and the loan performance of former students
+-   COMPLETION AND RETENTION
+    -   Outcomes such as students who found a job and successfully repayed student loans
+-   OUTCOMES FOR TITLE IV STUDENTS
+    -   Completion and transfer rate for students who receive federal financial aid
+-   EARNINGS
+    -   Earnings and employment prospects of former students
+-   REPAYMENT
+    -   Debt burden of attending college and the loan performance metrics for each institution
+
+There are too many to go through individually, so we will rely on Ridge Regression and Forward/Backward Selection to narrow down predictors for prediction and PCA for clustering. Additionally, many of the columns solely consist of NA values or consist of a majority NA values. Therefore, we will drop any columns were at least 40% of the observations are NA. For consistency, we will drop these same columns across all years.
+
+```{r}
+#| label: drop-NA-cols
+#| eval: false
+
+remove_cols <- prop_na %>%
+  filter(Proportion_Missing >= 0.4) %>%
+  pull(Column)
+
+card_02_03 <- card_02_03 %>% select(-all_of(remove_cols)) %>% mutate(year = 2004)
+card_03_04 <- card_03_04 %>% select(-all_of(remove_cols)) %>% mutate(year = 2005)
+card_04_05 <- card_04_05 %>% select(-all_of(remove_cols)) %>% mutate(year = 2006)
+card_05_06 <- card_05_06 %>% select(-all_of(remove_cols)) %>% mutate(year = 2007)
+card_06_07 <- card_06_07 %>% select(-all_of(remove_cols)) %>% mutate(year = 2008)
+card_07_08 <- card_07_08 %>% select(-all_of(remove_cols)) %>% mutate(year = 2009)
+card_08_09 <- card_08_09 %>% select(-all_of(remove_cols)) %>% mutate(year = 2010) 
+card_09_10 <- card_09_10 %>% select(-all_of(remove_cols)) %>% mutate(year = 2011)
+card_10_11 <- card_10_11 %>% select(-all_of(remove_cols)) %>% mutate(year = 2012)
+card_11_12 <- card_11_12 %>% select(-all_of(remove_cols)) %>% mutate(year = 2013)
+card_12_13 <- card_12_13 %>% select(-all_of(remove_cols)) %>% mutate(year = 2014)
+card_13_14 <- card_13_14 %>% select(-all_of(remove_cols)) %>% mutate(year = 2015) 
+card_14_15 <- card_14_15 %>% select(-all_of(remove_cols)) %>% mutate(year = 2016)
+card_15_16 <- card_15_16 %>% select(-all_of(remove_cols)) %>% mutate(year = 2017)
+card_16_17 <- card_16_17 %>% select(-all_of(remove_cols)) %>% mutate(year = 2018)
+card_17_18 <- card_17_18 %>% select(-all_of(remove_cols)) %>% mutate(year = 2019)
+card_18_19 <- card_18_19 %>% select(-all_of(remove_cols)) %>% mutate(year = 2020)
+card_19_20 <- card_19_20 %>% select(-all_of(remove_cols)) %>% mutate(year = 2021)
+card_20_21 <- card_20_21 %>% select(-all_of(remove_cols)) %>% mutate(year = 2022)
+card_21_22 <- card_21_22 %>% select(-all_of(remove_cols)) %>% mutate(year = 2023)
+card_22_23 <- card_22_23 %>% select(-all_of(remove_cols)) %>% mutate(year = 2024)  
+card_23_24 <- card_23_24 %>% select(-all_of(remove_cols)) %>% mutate(year = 2025)
+```
+
+### Joined Data
 
 ```{r}
 #| label: check-join
+#| eval: false
 
 r_lst <- rank %>%
-  select(Name) %>%
+  select(ipeds) %>%
   unique()
 
-c_lst <- card %>%
-  select(INSTNM) %>%
+c_lst <- card_23_24 %>%
+  select(UNITID) %>%
   unique()
 
 nrow(r_lst)
 nrow(c_lst)
+nrow(inner_join(r_lst, c_lst, by = join_by(ipeds == UNITID)))
 
-nrow(left_join(r_lst, c_lst, by = join_by(Name == INSTNM)))
+anti_join(r_lst, c_lst, by = join_by(ipeds == UNITID))
+
+# Drop this observation because it is a branch of NYU that only existed separately for 3 years, and NYU is already in the dataset
+rank %>%
+  filter(ipeds == 194541)
+
+card_all <- rbind(card_02_03, card_03_04, card_04_05, card_05_06, card_06_07, 
+                  card_07_08, card_08_09, card_09_10, card_10_11, card_11_12, 
+                  card_12_13, card_13_14, card_14_15, card_15_16, card_16_17, 
+                  card_17_18, card_18_19, card_19_20, card_20_21, card_21_22, 
+                  card_22_23, card_23_24)
+
+joined_data <- left_join(rank, card_all, by = join_by(ipeds == UNITID, year == year))
+
+write_csv(joined_data, "joined_data.csv")
 ```
 
-# Functions
+## Preliminary Results
+
+### Data 
+
+```{r}
+#| label: read-in-data
+#| message: false
+
+joined_data <- read_csv(here('project', 'joined_data.csv'))
+```
+
+### Functions
 
 ```{r}
 #| label: test-k-function
@@ -141,34 +323,123 @@ fit_kmeans <- function(data, recipe, k, counts = F) {
 }
 ```
 
-# KMeans
+### Recipes
+
+```{r}
+#| label: recipes
+
+base_recipe <- recipe(rank ~ ., data = joined_data) %>%
+  update_role(university_name, new_role = "id") %>%
+  step_rm(ipeds, year, INSTNM, ADDR, CITY, STABBR, ZIP, LATITUDE, LONGITUDE, 
+          OPEID, INSTURL, NPCURL, MAIN, NUMBRANCH, OPEFLAG, ACCREDAGENCY, 
+          ACCREDCODE, HIGHDEG, ICLEVEL, PREDDEG, SCH_DEG, CONTROL_PEPS, CCBASIC,
+          CCUGPROF, CCSIZSET, DISTANCEONLY, CIP01ASSOC, HCM2) %>%
+  step_mutate(across(where(is.character), as.factor))
+  
+base_recipe_norm <- base_recipe %>%
+  step_zv(all_numeric_predictors()) %>%
+  step_unknown(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors())
+```
+
+### Ridge Regression
+
+```{r}
+#| label: tuning-ridge
+
+joined_data_cvs <- vfold_cv(joined_data, v = 10)
+
+ridge_grid <- grid_regular(penalty(c(-10, 10), 
+                                   trans = log2_trans()), 
+                           levels = 2)
+
+ridge_mod_tune <- logistic_reg(penalty = tune(), 
+                               mixture = 0) %>%
+  set_engine("glmnet") %>%
+  set_mode("classification")
+
+ridge_wflow_tune <- workflow() %>%
+  add_model(ridge_mod_tune) %>% 
+  add_recipe(base_recipe_norm)
+
+ridge_grid_search <-
+  tune_grid(
+    ridge_wflow_tune,
+    resamples = joined_data_cvs,
+    grid = ridge_grid,
+    metrics = metric_set(accuracy, roc_auc, gain_capture, precision, recall)
+  )
+
+ridge_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  slice_max(mean) %>%
+  arrange(-penalty)
+```
+
+
+### K-Means
 
 ```{r}
 #| label: kmeans
-
-card_recipe_pca <- recipe(~., data = card %>% select(where(is.numeric))) %>%
-  # update_role(INSTNM, new_role = "id") %>%
-  # step_rm(UNITID, OPEID, OPEID6, CITY, STABBR, ZIP, ACCREDAGENCY, INSTURL, NPCURL, MAIN, NUMBRANCH) %>%
-  step_select(where(~ !all(is.na(.)))) %>%
-  step_impute_mean(all_numeric()) %>%
-  step_zv(all_predictors()) %>%
-  # step_unknown(all_nominal()) %>%
-  # step_dummy(all_nominal()) %>%
-  step_center(all_numeric()) %>%
-  step_scale(all_numeric()) %>%
-  step_pca(all_numeric(), threshold = 0.8)
-
-test <- card_recipe_pca %$%
-  steps %>% 
-  pluck(7) %$%
-  res
-
-test$rotation[,'PC1']
-
-k_lst <- c(5)
-
-kmeans_results <- list_rbind(map(k_lst, ~fit_kmeans(card %>% select(where(is.numeric)), card_recipe_pca, .x)))
-
-kmeans_results
+# 
+# card_recipe_pca <- recipe(~., data = card %>% select(where(is.numeric))) %>%
+#   # update_role(INSTNM, new_role = "id") %>%
+#   # step_rm(UNITID, OPEID, OPEID6, CITY, STABBR, ZIP, ACCREDAGENCY, INSTURL, NPCURL, MAIN, NUMBRANCH) %>%
+#   step_select(where(~ !all(is.na(.)))) %>%
+#   step_impute_mean(all_numeric()) %>%
+#   step_zv(all_predictors()) %>%
+#   # step_unknown(all_nominal()) %>%
+#   # step_dummy(all_nominal()) %>%
+#   step_center(all_numeric()) %>%
+#   step_scale(all_numeric()) %>%
+#   step_pca(all_numeric(), threshold = 0.8)
+# 
+# test <- card_recipe_pca %$%
+#   steps %>% 
+#   pluck(7) %$%
+#   res
+# 
+# test$rotation[,'PC1']
+# 
+# k_lst <- c(5, 10)
+# 
+# kmeans_results <- list_rbind(map(k_lst, ~fit_kmeans(card %>% select(where(is.numeric)), card_recipe_pca, .x)))
+# 
+# kmeans_results
 ```
 
+## Project Timeline and Goals
+
+The conclusion we expect to be able to make at the end of the project is what predictors are the most important in determining higher rankings for colleges. We intend to use ridge regression to narrow down our predictors, followed by a tree-based model for predictions. To cluster the colleges, we will use K-means after pre-processing with principle component analysis.
+
+# Reflection
+
+## Goals
+
+### What is the main takeaway message you hope to be able to supply to the partner?
+
+The main takeaway message we hope to be able to supply to the partner is what predictors are the most important in determining higher rankings for colleges.
+
+### What types of summaries or visualizations do you think would be impactful to communicate your results?
+
+The average ranking and highest ranking for each college would be impactful summaries that are easy to understand and interpret. We can also plot the two most important principle components that we use for clustering the colleges, and color each observation on the plot (each college) by which cluster they are included in, which would provide a helpful visualization for our clusters.
+
+### What are some conclusions that you would be excited to discover? What results might be a bit disappointing to you?
+
+We would be excited to discover that our final model provides accurate college rankings according to US News and World Report. We would also be excited to discover that many of the colleges in our dataset can clearly be clustered into different groups. However, we recognize that the clusters may not be so easily separable, which would be disappointing. It would also be a bit disappointing to us if we can not accurately predict college rankings based on the predictor variables in our final model.
+
+## Challenges
+
+### Are there any aspects of the data that you are worried about, or that are challenging to clean / manipulate?
+
+Our data includes a large amount of N/A values, since some colleges are not ranked in the top 150 every year, so we had to find a way to provide these unranked colleges some sort of rank value each year. Furthermore, our data set also includes some years where less than 150 colleges are ranked, and some years where more than 150 colleges are ranked. So there are some inconsistencies with how colleges are ranked each year.
+
+### Is there any information that is not in your dataset that you wish you could have?
+
+The U.S. News and World Report U.S. college rankings started in 1984, and they only ranked at most the top 25 colleges until 1996, where they began ranking the top 50. In 2004, they began ranking the top 120 colleges. And finally, in 2011, they started ranking the top 150 colleges in the U.S. Ideally, we would have data on the top 150 U.S. colleges all the way back in 1984, but the top 150 rankings did not start until 2011.
+
+### Are there any other concerns you have regarding the success of your project?
+
+Our data set has over 3000 columns, so parsing through each column to find the significant variables may be difficult. A concern we have is that we may miss some important predictors to include in our final model based on the fact that we have so many potential predictors to choose from.
