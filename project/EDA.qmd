@@ -82,7 +82,6 @@ rank %>%
   summarise(across(everything(), ~ round(sum(is.na(.)) / nrow(rank), 2))) %>%
   pivot_longer(cols = everything(), 
                names_to = 'Column', 
-               names_to = 'Year', 
                values_to = 'Proportion_Missing') %>%
   arrange(-Proportion_Missing)
 
@@ -334,14 +333,21 @@ base_recipe <- recipe(rank ~ ., data = joined_data) %>%
   step_rm(ipeds, year, INSTNM, ADDR, CITY, STABBR, ZIP, LATITUDE, LONGITUDE, 
           OPEID, INSTURL, NPCURL, MAIN, NUMBRANCH, OPEFLAG, ACCREDAGENCY, 
           ACCREDCODE, HIGHDEG, ICLEVEL, PREDDEG, SCH_DEG, CONTROL_PEPS, CCBASIC,
-          CCUGPROF, CCSIZSET, DISTANCEONLY, CIP01ASSOC, HCM2) %>%
-  step_mutate(across(where(is.character), as.factor))
+          CCUGPROF, CCSIZSET, DISTANCEONLY, CIP01ASSOC, HCM2)
+  # step_mutate(across(where(is.character), as.factor))
   
+base_recipe <- recipe(rank ~ ., data = joined_data %>% select(university_name, rank, where(is.numeric))) %>%
+  update_role(university_name, new_role = "id") %>%
+  step_rm(ipeds, year, LATITUDE, LONGITUDE, 
+          MAIN, NUMBRANCH, OPEFLAG, 
+          HIGHDEG, ICLEVEL, PREDDEG, SCH_DEG, CCBASIC,
+          CCUGPROF, CCSIZSET, DISTANCEONLY, CIP01ASSOC, HCM2)
+
 base_recipe_norm <- base_recipe %>%
   step_zv(all_numeric_predictors()) %>%
-  step_unknown(all_nominal_predictors()) %>%
-  step_normalize(all_numeric_predictors()) %>%
-  step_dummy(all_nominal_predictors())
+  # step_unknown(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+  # step_dummy(all_nominal_predictors())
 ```
 
 ### Ridge Regression
@@ -384,31 +390,31 @@ ridge_grid_search %>%
 
 ```{r}
 #| label: kmeans
-# 
-# card_recipe_pca <- recipe(~., data = card %>% select(where(is.numeric))) %>%
-#   # update_role(INSTNM, new_role = "id") %>%
-#   # step_rm(UNITID, OPEID, OPEID6, CITY, STABBR, ZIP, ACCREDAGENCY, INSTURL, NPCURL, MAIN, NUMBRANCH) %>%
-#   step_select(where(~ !all(is.na(.)))) %>%
-#   step_impute_mean(all_numeric()) %>%
-#   step_zv(all_predictors()) %>%
-#   # step_unknown(all_nominal()) %>%
-#   # step_dummy(all_nominal()) %>%
-#   step_center(all_numeric()) %>%
-#   step_scale(all_numeric()) %>%
-#   step_pca(all_numeric(), threshold = 0.8)
-# 
-# test <- card_recipe_pca %$%
-#   steps %>% 
-#   pluck(7) %$%
-#   res
+ 
+ card_recipe_pca <- recipe(~., data = joined_data %>% select(where(is.numeric))) %>%
+   # update_role(INSTNM, new_role = "id") %>%
+   # step_rm(UNITID, OPEID, OPEID6, CITY, STABBR, ZIP, ACCREDAGENCY, INSTURL, NPCURL, MAIN, NUMBRANCH) %>%
+   step_select(where(~ !all(is.na(.)))) %>%
+   step_impute_mean(all_numeric()) %>%
+   step_zv(all_predictors()) %>%
+   # step_unknown(all_nominal()) %>%
+   # step_dummy(all_nominal()) %>%
+   step_center(all_numeric()) %>%
+   step_scale(all_numeric()) %>%
+   step_pca(all_numeric(), threshold = 0.8)
+ 
+#  test <- card_recipe_pca %$%
+#    steps %>% 
+#    pluck(7) %$%
+#    res
 # 
 # test$rotation[,'PC1']
-# 
-# k_lst <- c(5, 10)
-# 
-# kmeans_results <- list_rbind(map(k_lst, ~fit_kmeans(card %>% select(where(is.numeric)), card_recipe_pca, .x)))
-# 
-# kmeans_results
+
+k_lst <- c(5, 10)
+
+kmeans_results <- list_rbind(map(k_lst, ~fit_kmeans(joined_data %>% select(where(is.numeric)), card_recipe_pca, .x)))
+
+kmeans_results
 ```
 
 ## Project Timeline and Goals
