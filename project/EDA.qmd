@@ -32,7 +32,7 @@ library(janitor)
 
 We are switching our primary and secondary goals for this data analysis project.
 
--   New Primary Goal: Predict what a college's ranking is based on various predictor variables.
+-   New Primary Goal: Predict what a college's ranking is based on various predictor variables with a focus on interpretability.
 -   New Secondary Goal: Cluster colleges together based on various predictor variables.
 
 # Project Proposal
@@ -209,6 +209,8 @@ remove_cols <- prop_na %>%
   filter(Proportion_Missing >= 0.4) %>%
   pull(Column)
 
+# look at naniar to see what columns have missing data 
+
 card_02_03 <- card_02_03 %>% select(-all_of(remove_cols)) %>% mutate(year = 2004)
 card_03_04 <- card_03_04 %>% select(-all_of(remove_cols)) %>% mutate(year = 2005)
 card_04_05 <- card_04_05 %>% select(-all_of(remove_cols)) %>% mutate(year = 2006)
@@ -350,7 +352,15 @@ base_recipe_norm <- base_recipe %>%
   # step_dummy(all_nominal_predictors())
 ```
 
-### Ridge Regression
+### LASSO Regression
+
+group by school
+impute mean
+
+if school has none, impute overall mean
+
+do lasso
+do something else for chosen variables
 
 ```{r}
 #| label: tuning-ridge
