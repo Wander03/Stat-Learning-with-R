@@ -116,7 +116,7 @@ rank <- rank %>%
   ) %>%
   mutate(
     year = as.numeric(year),
-    rank = ifelse(is.na(rank), "above 125", rank),
+    rank = ifelse(is.na(rank) | rank > 125, "above 125", rank),
     rank = factor(rank)
     ) %>%
   filter(year >= 2004) %>%
@@ -206,8 +206,19 @@ There are too many to go through individually, so we will rely on Ridge Regressi
 #| eval: false
 
 remove_cols <- prop_na %>%
-  filter(Proportion_Missing >= 0.4) %>%
+  filter(Proportion_Missing >= 0.4, Proportion_Missing <= .5) %>%
   pull(Column)
+
+joined_data_23_24 <- card_23_24 %>% 
+  mutate(year = 2025) %>%
+  right_join(rank, by = join_by(UNITID == ipeds, year == year)) %>%
+  select(university_name, all_of(remove_cols))
+
+joined_data_23_24 %>%
+  gg_miss_fct(x = ., fct = university_name)
+  
+joined_data_23_24 %>%
+  select(starts_with("N"))
 
 # look at naniar to see what columns have missing data 
 
