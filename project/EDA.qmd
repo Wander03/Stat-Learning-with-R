@@ -26,6 +26,7 @@ library(tidyclust)
 library(magrittr)
 library(readxl)
 library(janitor)
+library(naniar)
 ```
 
 ### NOTE
@@ -199,14 +200,18 @@ The 3,305 variables can be grouped into the following groupings:
 -   REPAYMENT
     -   Debt burden of attending college and the loan performance metrics for each institution
 
-There are too many to go through individually, so we will rely on Ridge Regression and Forward/Backward Selection to narrow down predictors for prediction and PCA for clustering. Additionally, many of the columns solely consist of NA values or consist of a majority NA values. Therefore, we will drop any columns were at least 40% of the observations are NA. For consistency, we will drop these same columns across all years.
+There are too many to go through individually, so we will rely on LASSO Regression to narrow down predictors for prediction and PCA for clustering. Additionally, many of the columns solely consist of NA values or consist of a majority NA values. Therefore, we will drop any columns where at least 40% of the observations are NA. For consistency, we will drop these same columns across all years.
 
 ```{r}
 #| label: drop-NA-cols
 #| eval: false
 
 remove_cols <- prop_na %>%
-  filter(Proportion_Missing >= 0.4, Proportion_Missing <= .5) %>%
+  filter(Proportion_Missing >= 0.4) %>%
+  pull(Column)
+
+remove_cols_check <- prop_na %>%
+  filter(Proportion_Missing >= 0.4, Proportion_Missing <= 0.5) %>%
   pull(Column)
 
 joined_data_23_24 <- card_23_24 %>% 
@@ -214,7 +219,7 @@ joined_data_23_24 <- card_23_24 %>%
   right_join(rank, by = join_by(UNITID == ipeds, year == year)) 
 
 joined_data_23_24 %>%
-  select(university_name, all_of(remove_cols))
+  select(university_name, all_of(remove_cols_check)) %>%
   gg_miss_fct(x = ., fct = university_name)
   
 joined_data_23_24 %>%
@@ -224,18 +229,6 @@ joined_data_23_24 %>%
   filter(year == 2025) %>%
   group_by(CONTROL_PEPS) %>%
   count()
-
-joined_data_23_24 %>%
-  filter(is.na(CONTROL_PEPS)) %>%
-  select(university_name,UNITID)
-
-rank %>%
-  filter(university_name == "Adelphi University")
-
-card_23_24 %>%
-  filter(INSTNM == "Adelphi University")
-
-# look at naniar to see what columns have missing data 
 
 card_02_03 <- card_02_03 %>% select(-all_of(remove_cols)) %>% mutate(year = 2004)
 card_03_04 <- card_03_04 %>% select(-all_of(remove_cols)) %>% mutate(year = 2005)
@@ -260,6 +253,8 @@ card_21_22 <- card_21_22 %>% select(-all_of(remove_cols)) %>% mutate(year = 2023
 card_22_23 <- card_22_23 %>% select(-all_of(remove_cols)) %>% mutate(year = 2024)  
 card_23_24 <- card_23_24 %>% select(-all_of(remove_cols)) %>% mutate(year = 2025)
 ```
+
+The columns with 40-50% NA values are Net Costs for a small subset of Private Colleges. Since there are other variables that measure similar metrics, we decided to drop these columns.
 
 ### Joined Data
 
@@ -292,6 +287,27 @@ card_all <- rbind(card_02_03, card_03_04, card_04_05, card_05_06, card_06_07,
                   card_22_23, card_23_24)
 
 joined_data <- left_join(rank, card_all, by = join_by(ipeds == UNITID, year == year))
+```
+
+```{r}
+#| label: final-cleaning
+#| eval: false
+
+missing_obs <- joined_data %>%
+  filter(is.na(INSTNM))
+
+missing_obs %>%
+  group_by(ipeds, year) %>%
+  summarise(across(everything(), ~ sum(is.na(.))))
+
+joined_data <- joined_data %>%
+  anti_join(missing_obs, by = join_by(ipeds == ipeds, year == year))
+```
+
+15 rows of data have no data in the scorecards data for any variables, so they will be dropped. 
+
+```{r}
+#| label: save-data
 
 write_csv(joined_data, "joined_data.csv")
 ```
@@ -303,9 +319,43 @@ write_csv(joined_data, "joined_data.csv")
 ```{r}
 #| label: read-in-data
 #| message: false
+#| warning: false
 
 joined_data <- read_csv(here('project', 'joined_data.csv'))
 ```
+
+### Impute Means
+
+```{r}
+#| label: means
+
+overall_means <- joined_data %>%
+  summarise(across(where(is.numeric), ~mean(.x, na.rm = TRUE), .names = "mean_{.col}"))
+
+df_imputed <- joined_data %>%
+  group_by(ipeds) %>%
+  mutate(
+    across(
+      where(is.numeric),
+      ~ if_else(
+        is.na(.x),
+        coalesce(mean(.x, na.rm = TRUE), overall_means[[paste0("mean_", cur_column())]]),
+        .x
+      ),
+      .names = "{.col}"
+    )
+  ) %>%
+  ungroup()
+
+df_imputed %>%
+  summarise(across(where(is.numeric), ~ round(sum(is.na(.)) / nrow(df_imputed), 2))) %>%
+  pivot_longer(cols = everything(), 
+               names_to = 'Column', 
+               values_to = 'Proportion_Missing') %>%
+  arrange(-Proportion_Missing)
+```
+
+For simplicity, we will only use numeric columns.
 
 ### Functions
 
@@ -356,65 +406,48 @@ fit_kmeans <- function(data, recipe, k, counts = F) {
 ```{r}
 #| label: recipes
 
-base_recipe <- recipe(rank ~ ., data = joined_data) %>%
+base_recipe <- recipe(rank ~ ., data = df_imputed) %>%
   update_role(university_name, new_role = "id") %>%
   step_rm(ipeds, year, INSTNM, ADDR, CITY, STABBR, ZIP, LATITUDE, LONGITUDE, 
           OPEID, INSTURL, NPCURL, MAIN, NUMBRANCH, OPEFLAG, ACCREDAGENCY, 
           ACCREDCODE, HIGHDEG, ICLEVEL, PREDDEG, SCH_DEG, CONTROL_PEPS, CCBASIC,
-          CCUGPROF, CCSIZSET, DISTANCEONLY, CIP01ASSOC, HCM2)
-  # step_mutate(across(where(is.character), as.factor))
-  
-base_recipe <- recipe(rank ~ ., data = joined_data %>% select(university_name, rank, where(is.numeric))) %>%
-  update_role(university_name, new_role = "id") %>%
-  step_rm(ipeds, year, LATITUDE, LONGITUDE, 
-          MAIN, NUMBRANCH, OPEFLAG, 
-          HIGHDEG, ICLEVEL, PREDDEG, SCH_DEG, CCBASIC,
-          CCUGPROF, CCSIZSET, DISTANCEONLY, CIP01ASSOC, HCM2)
+          CCUGPROF, CCSIZSET, DISTANCEONLY, CIP01ASSOC, HCM2) %>%
+  step_rm(all_nominal_predictors())
 
 base_recipe_norm <- base_recipe %>%
   step_zv(all_numeric_predictors()) %>%
-  # step_unknown(all_nominal_predictors()) %>%
   step_normalize(all_numeric_predictors())
-  # step_dummy(all_nominal_predictors())
 ```
 
 ### LASSO Regression
 
-group by school
-impute mean
-
-if school has none, impute overall mean
-
-do lasso
-do something else for chosen variables
-
 ```{r}
 #| label: tuning-ridge
 
-joined_data_cvs <- vfold_cv(joined_data, v = 10)
+joined_data_cvs <- vfold_cv(df_imputed, v = 10)
 
-ridge_grid <- grid_regular(penalty(c(-10, 10), 
+lasso_grid <- grid_regular(penalty(c(-10, 10), 
                                    trans = log2_trans()), 
-                           levels = 2)
+                           levels = 1)
 
-ridge_mod_tune <- logistic_reg(penalty = tune(), 
-                               mixture = 0) %>%
+lasso_mod_tune <- multinom_reg(penalty = tune(), 
+                               mixture = 1) %>%
   set_engine("glmnet") %>%
   set_mode("classification")
 
-ridge_wflow_tune <- workflow() %>%
-  add_model(ridge_mod_tune) %>% 
+lasso_wflow_tune <- workflow() %>%
+  add_model(lasso_mod_tune) %>% 
   add_recipe(base_recipe_norm)
 
-ridge_grid_search <-
+lasso_grid_search <-
   tune_grid(
-    ridge_wflow_tune,
+    lasso_wflow_tune,
     resamples = joined_data_cvs,
-    grid = ridge_grid,
-    metrics = metric_set(accuracy, roc_auc, gain_capture, precision, recall)
+    grid = lasso_grid,
+    metrics = metric_set(accuracy, gain_capture, precision, recall)
   )
 
-ridge_grid_search %>% 
+lasso_grid_search %>% 
   collect_metrics() %>%
   filter(.metric == "accuracy") %>%
   slice_max(mean) %>%
