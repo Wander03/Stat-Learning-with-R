@@ -308,6 +308,7 @@ joined_data <- joined_data %>%
 
 ```{r}
 #| label: save-data
+#| eval: false
 
 write_csv(joined_data, "joined_data.csv")
 ```
@@ -422,13 +423,14 @@ base_recipe_norm <- base_recipe %>%
 ### LASSO Regression
 
 ```{r}
-#| label: tuning-ridge
+#| label: tuning-lasso
+#| eval: false
 
 joined_data_cvs <- vfold_cv(df_imputed, v = 10)
 
 lasso_grid <- grid_regular(penalty(c(-10, 10), 
                                    trans = log2_trans()), 
-                           levels = 1)
+                           levels = 10)
 
 lasso_mod_tune <- multinom_reg(penalty = tune(), 
                                mixture = 1) %>%
@@ -444,16 +446,34 @@ lasso_grid_search <-
     lasso_wflow_tune,
     resamples = joined_data_cvs,
     grid = lasso_grid,
-    metrics = metric_set(accuracy, gain_capture, precision, recall)
+    metrics = metric_set(accuracy, precision, recall)
   )
 
 lasso_grid_search %>% 
   collect_metrics() %>%
-  filter(.metric == "accuracy") %>%
-  slice_max(mean) %>%
-  arrange(-penalty)
+  filter(.metric == "accuracy")
 ```
 
+```{r}
+#| label: lasso_fit
+
+lasso_mod <- multinom_reg(penalty = 9.765625e-04, 
+                          mixture = 1) %>%
+  set_engine("glmnet") %>%
+  set_mode("classification")
+
+lasso_wflow <- workflow() %>%
+  add_model(lasso_mod) %>% 
+  add_recipe(base_recipe_norm)
+
+lasso_fit <- lasso_wflow %>%
+  fit(df_imputed)
+
+lasso_fit %>%
+  extract_fit_parsnip() %>%
+  tidy(n = Inf) %>%
+  filter(estimate != 0)
+```
 
 ### K-Means
 
