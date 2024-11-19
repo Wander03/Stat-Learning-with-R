@@ -211,14 +211,29 @@ remove_cols <- prop_na %>%
 
 joined_data_23_24 <- card_23_24 %>% 
   mutate(year = 2025) %>%
-  right_join(rank, by = join_by(UNITID == ipeds, year == year)) %>%
-  select(university_name, all_of(remove_cols))
+  right_join(rank, by = join_by(UNITID == ipeds, year == year)) 
 
 joined_data_23_24 %>%
+  select(university_name, all_of(remove_cols))
   gg_miss_fct(x = ., fct = university_name)
   
 joined_data_23_24 %>%
   select(starts_with("N"))
+
+joined_data_23_24 %>%
+  filter(year == 2025) %>%
+  group_by(CONTROL_PEPS) %>%
+  count()
+
+joined_data_23_24 %>%
+  filter(is.na(CONTROL_PEPS)) %>%
+  select(university_name,UNITID)
+
+rank %>%
+  filter(university_name == "Adelphi University")
+
+card_23_24 %>%
+  filter(INSTNM == "Adelphi University")
 
 # look at naniar to see what columns have missing data 
 
