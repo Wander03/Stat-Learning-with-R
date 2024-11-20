@@ -103,7 +103,7 @@ rank %>%
 
 From the above table, we notice that the ranking for many colleges each year is NA, meaning that they were not ranked within the top 150 colleges that year. Additionally, each year the top 150 colleges were not ranked, but less. The histogram shows that in the 1900s, only the top 25 colleges were ranked, then in the 1996 this increased to the top 50. In 2004 the top 125 colleges were ranked, and this amount increased to 150 in 2011. The reason the maximum ranking is not 50, 100, or 150 exactly is because the metric used to rank these colleges could tie, in which case the tied colleges were assigned the same rank.
 
-To preserve the data and utilize the most possible, we will focus on ranking the top 125 colleges, only use the years between 2004 and 2025. Observations which are NA or greater than 125 will be labeled "above 125" to indicate that they are/would have been ranked below the top 125 for that year.
+Since most students do not differentiate between colleges close in ranking, we decided to bin the ranks into 5 bins: 1-25, 26-50, 51-75, 75-100, and 100+. We will only use ranking from 2004-2025 since these years ranked at least the top 100 colleges, and we will drop any colleges that have never been in the top 100 within these years.
 
 ```{r}
 #| label: long-rank
@@ -117,11 +117,28 @@ rank <- rank %>%
   ) %>%
   mutate(
     year = as.numeric(year),
-    rank = ifelse(is.na(rank) | rank > 125, "above 125", rank),
-    rank = factor(rank)
+    rank_bin = factor(case_when(
+      rank >= 1 & rank <= 25 ~ "1-25",
+      rank >= 26 & rank <= 50 ~ "26-50",
+      rank >= 51 & rank <= 75 ~ "51-75",
+      rank >= 76 & rank <= 100 ~ "76-100",
+      TRUE ~ "100+"
+    ), levels = c("1-25", "26-50", "51-75", "76-100", "100+"))
     ) %>%
   filter(year >= 2004) %>%
-  select(university_name, ipeds, year, rank)
+  group_by(ipeds) %>%
+  filter(any(rank <= 100)) %>%
+  ungroup() %>%
+  select(university_name, ipeds, year, rank_bin)
+
+rank %>%
+  ggplot(aes(x = rank_bin)) +
+  geom_bar(color = "black", fill = "cornflowerblue") +
+  theme_bw() +
+  facet_wrap(~ year, ncol = 6) +
+  labs(x = "Rank",
+       y = "Count",
+       title = "Colleges in each Binnned Rank by Year")
 ```
 
 ### College Scorecard
@@ -402,12 +419,12 @@ fit_kmeans <- function(data, recipe, k, counts = F) {
 }
 ```
 
-### Recipes
+### Starting Recipes
 
 ```{r}
 #| label: recipes
 
-base_recipe <- recipe(rank ~ ., data = df_imputed) %>%
+base_recipe <- recipe(rank_bin ~ ., data = df_imputed) %>%
   update_role(university_name, new_role = "id") %>%
   step_rm(ipeds, year, INSTNM, ADDR, CITY, STABBR, ZIP, LATITUDE, LONGITUDE, 
           OPEID, INSTURL, NPCURL, MAIN, NUMBRANCH, OPEFLAG, ACCREDAGENCY, 
@@ -420,7 +437,7 @@ base_recipe_norm <- base_recipe %>%
   step_normalize(all_numeric_predictors())
 ```
 
-### LASSO Regression
+### LASSO Regression (Variable Reduction)
 
 ```{r}
 #| label: tuning-lasso
@@ -428,7 +445,7 @@ base_recipe_norm <- base_recipe %>%
 
 joined_data_cvs <- vfold_cv(df_imputed, v = 10)
 
-lasso_grid <- grid_regular(penalty(c(-10, 10), 
+lasso_grid <- grid_regular(penalty(c(-15, -5), 
                                    trans = log2_trans()), 
                            levels = 10)
 
@@ -451,13 +468,14 @@ lasso_grid_search <-
 
 lasso_grid_search %>% 
   collect_metrics() %>%
-  filter(.metric == "accuracy")
+  filter(.metric == "accuracy") %>%
+  arrange(-mean)
 ```
 
 ```{r}
 #| label: lasso_fit
 
-lasso_mod <- multinom_reg(penalty = 9.765625e-04, 
+lasso_mod <- multinom_reg(penalty = 6.644482e-04, 
                           mixture = 1) %>%
   set_engine("glmnet") %>%
   set_mode("classification")
@@ -469,10 +487,88 @@ lasso_wflow <- workflow() %>%
 lasso_fit <- lasso_wflow %>%
   fit(df_imputed)
 
-lasso_fit %>%
+lasso_output <- lasso_fit %>%
   extract_fit_parsnip() %>%
   tidy(n = Inf) %>%
   filter(estimate != 0)
+
+lasso_output %>%
+  filter(term != "(Intercept)") %>%
+  arrange(-abs(estimate))
+
+keep_vars <- lasso_output %>%
+  filter(term != "(Intercept)") %>%
+  pull(term) %>%
+  unique()
+
+keep_vars %>%
+  length()
+
+df_imputed_reduced <- df_imputed %>%
+  select(ipeds, university_name, year, rank_bin, all_of(keep_vars))
+```
+
+To reduce the amount of variables, we ran LASSO Regression to zero-out the less important variables. The most influential predictor is the amount of money the 90th percentile of graduates are earning after 10 years, followed by the percentage of undergraduate students who received federal loans and the percentage of undergraduate African American students.
+
+### Recipes
+
+```{r}
+#| label: new-recipes
+
+base_recipe <- recipe(rank_bin ~ ., data = df_imputed_reduced) %>%
+  update_role(university_name, new_role = "id") %>%
+  step_rm(ipeds, year) %>%
+  step_rm(all_nominal_predictors())
+
+base_recipe_norm <- base_recipe %>%
+  step_zv(all_numeric_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+
+cluster_recipe_pca <- recipe(~., data = df_imputed_reduced) %>%
+  update_role(university_name, new_role = "id") %>%
+  step_rm(ipeds, year, rank_bin) %>%
+  step_rm(all_nominal_predictors()) %>%
+  step_zv(all_numeric_predictors()) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_pca(all_numeric(), threshold = 0.8)
+```
+
+### Decision Tree
+
+```{r}
+#| label: dc-tune
+
+set.seed(123)
+
+df_imputed_reduced_cvs <- vfold_cv(df_imputed_reduced, v = 10)
+
+tree_grid <- grid_regular(cost_complexity(),
+                          tree_depth(),
+                          min_n(),
+                          levels = 5)
+
+tree_mod_tune <- decision_tree(cost_complexity = tune(),
+                               tree_depth = tune(),
+                               min_n = tune()) %>%
+  set_engine("rpart") %>%
+  set_mode("classification")
+
+tree_wflow_tune <- workflow() %>%
+  add_model(tree_mod_tune) %>% 
+  add_recipe(base_recipe)
+
+tree_grid_search <-
+  tune_grid(
+    tree_wflow_tune,
+    resamples = df_imputed_reduced_cvs,
+    grid = tree_grid,
+    metrics = metric_set(accuracy, roc_auc, precision, recall, gain_capture)
+  )
+
+tree_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "gain_capture") %>%
+  slice_max(mean, n = 5)
 ```
 
 ### K-Means
@@ -480,31 +576,14 @@ lasso_fit %>%
 ```{r}
 #| label: kmeans
  
- card_recipe_pca <- recipe(~., data = joined_data %>% select(where(is.numeric))) %>%
-   # update_role(INSTNM, new_role = "id") %>%
-   # step_rm(UNITID, OPEID, OPEID6, CITY, STABBR, ZIP, ACCREDAGENCY, INSTURL, NPCURL, MAIN, NUMBRANCH) %>%
-   step_select(where(~ !all(is.na(.)))) %>%
-   step_impute_mean(all_numeric()) %>%
-   step_zv(all_predictors()) %>%
-   # step_unknown(all_nominal()) %>%
-   # step_dummy(all_nominal()) %>%
-   step_center(all_numeric()) %>%
-   step_scale(all_numeric()) %>%
-   step_pca(all_numeric(), threshold = 0.8)
- 
-#  test <- card_recipe_pca %$%
-#    steps %>% 
-#    pluck(7) %$%
-#    res
-# 
-# test$rotation[,'PC1']
+k_lst <- seq(2, 15, 2)
 
-k_lst <- c(5, 10)
-
-kmeans_results <- list_rbind(map(k_lst, ~fit_kmeans(joined_data %>% select(where(is.numeric)), card_recipe_pca, .x)))
+kmeans_results <- list_rbind(map(k_lst, ~fit_kmeans(df_imputed_reduced, cluster_recipe_pca, .x)))
 
 kmeans_results
 ```
+
+Above we see that 
 
 ## Project Timeline and Goals
 
