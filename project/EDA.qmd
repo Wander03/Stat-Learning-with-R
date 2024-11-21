@@ -55,7 +55,7 @@ We are able to provide these resources through private and public donors, and we
 
 The project focuses on helping students decide what college is best for them and making this decision more accessible. By predicting the rankings, students will have a better idea of how their school of choice will continue to perform throughout their education. This will assist your organization in the goal to help students attend college, as finding the right college is a vital part of the process of deciding to go to college. If students have a good idea of what schools will be right for them, then they are more likely to not only decide to go to college, but also stay in college. The project has the main goal of predicting what a college's ranking is based on various predictor variables and the secondary goal of clustering colleges together based on various predictor variables.
 
-The main dataset used for this analysis comes from the U.S. Department of Education. The government creates this dataset to provide students and educators with a comprehensive and accessible tool for evaluating and comparing U.S. colleges. This dataset contains numerous variables from over 6,000 colleges, sourced from federally reported information from the institutions. The dataset on college rankings for this project comes from US News & World Report, which generally is seen as a reliable source for college rankings and was compiled by Andrew Reiter. US News & World Report is a journalism company that creates these rankings to inform the general public, especially prospective college students. Ranks are determined based on various metrics including graduation rates, student debt, and student to faculty ratio to calculate the rankings. These ranks will be our target variable of our analysis. Both sets collect data on the college level. To prepare for this analysis, the two datasets will be joined and all colleges that are not featured in the rankings set will be dropped, leaving 188 total colleges in our analysis.
+The main dataset used for this analysis comes from the U.S. Department of Education. The government creates this dataset to provide students and educators with a comprehensive and accessible tool for evaluating and comparing U.S. colleges. This dataset contains numerous variables from over 6,000 colleges, sourced from federally reported information from the institutions. The dataset on college rankings for this project comes from US News & World Report, which generally is seen as a reliable source for college rankings and was compiled by Andrew Reiter. US News & World Report is a journalism company that creates these rankings to inform the general public, especially prospective college students. Ranks are determined based on various metrics including graduation rates, student debt, and student to faculty ratio to calculate the rankings. We will bin these ranks, and they will be our target variable of our analysis. Both sets collect data on the college level. To prepare for this analysis, the two datasets will be joined and all colleges that are not featured in the rankings set will be dropped, leaving 188 total colleges in our initial analysis.
 
 This project will assist college-bound students in their decision of which college to attend. Additionally, this will hopefully assist students in determining how they will fund their attendance, as they will be able to see what type and amount of loan they may need to take out, along with the amount of money they can be expected to earn once graduating, ensuring that they pick a college that will not trap them in debt. This project could be biased against community colleges, as we are not including them in our analyses, but are still a viable option for students. This project will have minimal privacy and bias concerns, as all information is federally reported information about the schools as a whole, rather than individual students. To ensure ethical work, this project will be fully transparent on all methods, analyses and data sources.
 
@@ -540,6 +540,7 @@ cluster_recipe_pca <- recipe(~., data = df_imputed_reduced) %>%
 
 ```{r}
 #| label: dc-tune
+#| eval: false
 
 set.seed(123)
 
@@ -573,6 +574,7 @@ tree_grid_search %>%
   filter(.metric == "gain_capture") %>%
   slice_max(mean, n = 10)
 ```
+
 ```{r}
 #| label: dc-fit
 
@@ -611,6 +613,8 @@ tree_fitted <- tree_fit %>%
 rpart.plot(tree_fitted$fit, roundint = FALSE)
 ```
 
+The early splits in the decision tree uses variables with high magnitudes from our LASSO Regression. We will continue tuning decision trees, and try random forests, LDA, and QDA.
+
 ### K-Means
 
 ```{r}
@@ -637,53 +641,59 @@ engine_fit <- km_fitted %>%
 
 ################################################################################
 
-pca_output <- cluster_recipe_pca %>%
-  prep() %$%
-  steps %>% 
-  pluck(5) %$%
-  res
+# pca_output <- cluster_recipe_pca %>%
+#   prep() %$%
+#   steps %>%
+#   pluck(5) %$%
+#   res
+# 
+# pca_output %$%
+#   sdev %>%
+#   {cumsum(.^2) / sum(.^2)}
 
-PC1 <- pca_output$rotation[, 1]
-PC2 <- pca_output$rotation[, 2]
-
-pc1_df <- data.frame(Variable = names(PC1), PC1 = PC1)
-
-pc1_df %>%
-  arrange(-abs(PC1))
-
-ggplot(pc1_df, aes(x = Variable, y = 1, fill = PC1)) +
-  geom_tile() +
-  scale_fill_gradient(low = "white", high = "blue") +
-  theme_minimal() +
-  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank()) +
-  labs(title = "Heatmap of PC1", x = "Variables", y = "")
+# 
+# PC1 <- pca_output$rotation[, 1]
+# PC2 <- pca_output$rotation[, 2]
+# PC3 <- pca_output$rotation[, 3]
+# 
+# pc1_df <- data.frame(Variable = names(PC1), PC1 = PC1)
+# 
+# pc1_df %>%
+#   arrange(-abs(PC1))
+# 
+# ggplot(pc1_df, aes(x = Variable, y = 1, fill = PC1)) +
+#   geom_tile() +
+#   scale_fill_gradient(low = "white", high = "blue") +
+#   theme_minimal() +
+#   theme(axis.text.y = element_blank(), axis.ticks.y = element_blank()) +
+#   labs(title = "Heatmap of PC1", x = "Variables", y = "")
 
 ################################################################################
 
-cluster_means <- as.data.frame(df_imputed_reduced) %>%
-  mutate(
-    cluster = extract_cluster_assignment(engine_fit)$.cluster
-  ) %>%
-  group_by(cluster) %>%
-  summarize(
-    across(.cols = PCIP04:MD_EARN_WNE_MALE1_P9, 
-           .fns = ~ mean(.x)
-           )
-    )
-
-cluster_means_long <- cluster_means %>%
-  pivot_longer(cols = PCIP04:MD_EARN_WNE_MALE1_P9, names_to = 'Feature', values_to = 'Mean')
-
-cluster_means_long %>%
-  ggplot(aes(x = Feature, y = cluster, fill = Mean)) +
-    geom_tile() +
-    scale_fill_viridis_c() +
-    theme_minimal() +
-    theme(axis.text.x = element_text(angle = 30, hjust = 1), 
-          axis.title.x = element_blank()) +
-    labs(title = 'Feature Mean Values by Cluster',
-         y = 'Cluster',
-         fill = 'Scaled Mean')
+# cluster_means <- as.data.frame(df_imputed_reduced) %>%
+#   mutate(
+#     cluster = extract_cluster_assignment(engine_fit)$.cluster
+#   ) %>%
+#   group_by(cluster) %>%
+#   summarize(
+#     across(.cols = PCIP04:MD_EARN_WNE_MALE1_P9, 
+#            .fns = ~ mean(.x)
+#            )
+#     )
+# 
+# cluster_means_long <- cluster_means %>%
+#   pivot_longer(cols = PCIP04:MD_EARN_WNE_MALE1_P9, names_to = 'Feature', values_to = 'Mean')
+# 
+# cluster_means_long %>%
+#   ggplot(aes(x = Feature, y = cluster, fill = Mean)) +
+#     geom_tile() +
+#     scale_fill_viridis_c() +
+#     theme_minimal() +
+#     theme(axis.text.x = element_text(angle = 30, hjust = 1), 
+#           axis.title.x = element_blank()) +
+#     labs(title = 'Feature Mean Values by Cluster',
+#          y = 'Cluster',
+#          fill = 'Scaled Mean')
 
 ################################################################################
 
@@ -744,11 +754,11 @@ combined_plot <- plot1 + plot2 +
 combined_plot
 ```
 
-Above we see that 
+Above we see that Cluster 3 roughly matches with binned ranks 1-25, and Cluster 1 roughly matches binned ranks 76-100. The plot with PC2 and PC3 do not seem to reveal much. We will continue to delve into what each PC represents  as well as trying different values for k (i.e. maybe binned ranks 26-50 and 51-75 should be 1 cluster instead of 20).
 
 ## Project Timeline and Goals
 
-The conclusion we expect to be able to make at the end of the project is what predictors are the most important in determining higher rankings for colleges. We intend to use ridge regression to narrow down our predictors, followed by a tree-based model for predictions. To cluster the colleges, we will use K-means after pre-processing with principle component analysis.
+The conclusion we expect to be able to make at the end of the project is what predictors are the most important in determining higher rankings for colleges. We intend to use lasso regression to narrow down our predictors, followed by a tree-based model for predictions. To cluster the colleges, we will use K-means after pre-processing with principle component analysis.
 
 # Reflection
 ## Goals
@@ -758,7 +768,7 @@ The main takeaway message we hope to be able to supply to the partner is what pr
 
 ### What types of summaries or visualizations do you think would be impactful to communicate your results?
 
-The average ranking and highest ranking for each college would be impactful summaries that are easy to understand and interpret. We can also plot the two most important principle components that we use for clustering the colleges, and color each observation on the plot (each college) by which cluster they are included in, which would provide a helpful visualization for our clusters.
+A decision tree depicting the most important variables would be an efficient method to visualize important predictors when predicting rank. We can also plot the two most important principle components that we use for clustering the colleges, and color each observation on the plot (each college) by which cluster they are included in, which would provide a helpful visualization for our clusters.
 
 ### What are some conclusions that you would be excited to discover? What results might be a bit disappointing to you?
 

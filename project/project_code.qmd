@@ -1,0 +1,495 @@
+---
+title: "Project: CODE"
+author: "Lily Cook, Andrew Kerr, Daniel Erro"
+format: 
+  html:
+    code-fold: true
+    toc: true
+    toc-title: "Outline"
+    toc-depth: 3
+    code-line-numbers: true
+    code-tools: true
+    self-contained: true
+editor: visual
+embed-resources: true
+---
+
+```{r}
+#| label: libraries
+#| message: false
+#| include: false
+
+library(tidyverse)
+library(here)
+library(tidymodels)
+library(tidyclust)
+library(magrittr)
+library(readxl)
+library(janitor)
+library(naniar)
+library(rpart)
+library(rpart.plot)
+library(patchwork)
+```
+
+# Data 
+
+```{r}
+#| label: read-in-data
+#| message: false
+#| warning: false
+
+joined_data <- read_csv(here('project', 'joined_data.csv'))
+```
+
+## Impute Means
+
+```{r}
+#| label: means
+
+overall_means <- joined_data %>%
+  summarise(across(where(is.numeric), ~mean(.x, na.rm = TRUE), .names = "mean_{.col}"))
+
+df_imputed <- joined_data %>%
+  group_by(ipeds) %>%
+  mutate(
+    across(
+      where(is.numeric),
+      ~ if_else(
+        is.na(.x),
+        coalesce(mean(.x, na.rm = TRUE), overall_means[[paste0("mean_", cur_column())]]),
+        .x
+      ),
+      .names = "{.col}"
+    )
+  ) %>%
+  ungroup()
+
+df_imputed %>%
+  summarise(across(where(is.numeric), ~ round(sum(is.na(.)) / nrow(df_imputed), 2))) %>%
+  pivot_longer(cols = everything(), 
+               names_to = 'Column', 
+               values_to = 'Proportion_Missing') %>%
+  arrange(-Proportion_Missing)
+```
+
+## Variable Reduction 
+
+### Recipes
+
+```{r}
+#| label: recipes
+
+base_recipe <- recipe(rank_bin ~ ., data = df_imputed) %>%
+  update_role(university_name, new_role = "id") %>%
+  step_rm(ipeds, year, INSTNM, ADDR, CITY, STABBR, ZIP, LATITUDE, LONGITUDE, 
+          OPEID, INSTURL, NPCURL, MAIN, NUMBRANCH, OPEFLAG, ACCREDAGENCY, 
+          ACCREDCODE, HIGHDEG, ICLEVEL, PREDDEG, SCH_DEG, CONTROL_PEPS, CCBASIC,
+          CCUGPROF, CCSIZSET, DISTANCEONLY, CIP01ASSOC, HCM2) %>%
+  step_rm(all_nominal_predictors())
+
+base_recipe_norm <- base_recipe %>%
+  step_zv(all_numeric_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+```
+
+### LASSO Regression
+
+```{r}
+#| label: tuning-lasso
+#| eval: false
+
+joined_data_cvs <- vfold_cv(df_imputed, v = 10)
+
+lasso_grid <- grid_regular(penalty(c(-15, -5), 
+                                   trans = log2_trans()), 
+                           levels = 10)
+
+lasso_mod_tune <- multinom_reg(penalty = tune(), 
+                               mixture = 1) %>%
+  set_engine("glmnet") %>%
+  set_mode("classification")
+
+lasso_wflow_tune <- workflow() %>%
+  add_model(lasso_mod_tune) %>% 
+  add_recipe(base_recipe_norm)
+
+lasso_grid_search <-
+  tune_grid(
+    lasso_wflow_tune,
+    resamples = joined_data_cvs,
+    grid = lasso_grid,
+    metrics = metric_set(accuracy, precision, recall)
+  )
+
+lasso_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  arrange(-mean)
+```
+
+```{r}
+#| label: lasso_fit
+
+lasso_mod <- multinom_reg(penalty = 6.644482e-04, 
+                          mixture = 1) %>%
+  set_engine("glmnet") %>%
+  set_mode("classification")
+
+lasso_wflow <- workflow() %>%
+  add_model(lasso_mod) %>% 
+  add_recipe(base_recipe_norm)
+
+lasso_fit <- lasso_wflow %>%
+  fit(df_imputed)
+
+lasso_output <- lasso_fit %>%
+  extract_fit_parsnip() %>%
+  tidy(n = Inf) %>%
+  filter(estimate != 0)
+
+lasso_output %>%
+  filter(term != "(Intercept)") %>%
+  arrange(-abs(estimate))
+
+keep_vars <- lasso_output %>%
+  filter(term != "(Intercept)") %>%
+  pull(term) %>%
+  unique()
+
+keep_vars %>%
+  length()
+
+df_imputed_reduced <- df_imputed %>%
+  select(ipeds, university_name, year, rank_bin, all_of(keep_vars))
+```
+
+# Functions
+
+```{r}
+#| label: test-k-function
+
+fit_kmeans <- function(data, recipe, k, counts = F) {
+
+  km_spec <- k_means(num_clusters = k)
+  
+  km_wflow <- workflow() %>%
+    add_recipe(recipe) %>%
+    add_model(km_spec)
+  
+  km_fitted <- km_wflow %>% fit(data)
+
+  engine_fit <- km_fitted %>% 
+    extract_fit_engine()
+  
+  df_results <- data.frame(
+    k = k,
+    Cluster = paste0("Cluster_", seq(1:k)),
+    Withiness = engine_fit$withinss,
+    Betweenss = engine_fit$betweenss,
+    Total_Withiness = engine_fit$tot.withinss
+  ) %>% pivot_wider(names_from = Cluster, values_from = Withiness)
+  
+  if(counts) {
+    
+    df_counts <- data.frame(
+      k = k,
+      extract_cluster_assignment(km_fitted) %>%
+        group_by(.cluster) %>%
+        count()
+    ) %>% pivot_wider(names_from = .cluster, values_from = n)
+    
+    return(list(results = df_results, counts = df_counts))
+    
+  }
+    
+  return(results = df_results)
+  
+}
+```
+
+# Main Question (Rank Prediction)
+
+## Recipes
+
+```{r}
+#| label: prediction-recipes
+
+base_recipe <- recipe(rank_bin ~ ., data = df_imputed_reduced) %>%
+  update_role(university_name, new_role = "id") %>%
+  step_rm(ipeds, year) %>%
+  step_rm(all_nominal_predictors())
+
+base_recipe_norm <- base_recipe %>%
+  step_zv(all_numeric_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+```
+
+## Decision Tree
+
+```{r}
+#| label: dc-tune
+#| eval: false
+
+set.seed(123)
+
+df_imputed_reduced_cvs <- vfold_cv(df_imputed_reduced, v = 10)
+
+tree_grid <- grid_regular(cost_complexity(),
+                          tree_depth(),
+                          min_n(),
+                          levels = 5)
+
+tree_mod_tune <- decision_tree(cost_complexity = tune(),
+                               tree_depth = tune(),
+                               min_n = tune()) %>%
+  set_engine("rpart") %>%
+  set_mode("classification")
+
+tree_wflow_tune <- workflow() %>%
+  add_model(tree_mod_tune) %>% 
+  add_recipe(base_recipe)
+
+tree_grid_search <-
+  tune_grid(
+    tree_wflow_tune,
+    resamples = df_imputed_reduced_cvs,
+    grid = tree_grid,
+    metrics = metric_set(accuracy, roc_auc, precision, recall, gain_capture)
+  )
+
+tree_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "gain_capture") %>%
+  slice_max(mean, n = 10)
+```
+
+```{r}
+#| label: dc-fit
+
+tree_mod <- decision_tree(cost_complexity = 1.000000e-10,
+                          tree_depth = 15,
+                          min_n = 21) %>%
+  set_engine("rpart") %>%
+  set_mode("classification")
+
+tree_wflow <- workflow() %>%
+  add_model(tree_mod) %>% 
+  add_recipe(base_recipe)
+
+tree_fit <- tree_wflow %>% fit(df_imputed_reduced)
+
+tree_fitted <- tree_fit %>% 
+  extract_fit_parsnip()
+
+rpart.plot(tree_fitted$fit, roundint = FALSE)
+
+tree_mod <- decision_tree(cost_complexity = 1.000000e-10,
+                          tree_depth = 3,
+                          min_n = 21) %>%
+  set_engine("rpart") %>%
+  set_mode("classification")
+
+tree_wflow <- workflow() %>%
+  add_model(tree_mod) %>% 
+  add_recipe(base_recipe)
+
+tree_fit <- tree_wflow %>% fit(df_imputed_reduced)
+
+tree_fitted <- tree_fit %>% 
+  extract_fit_parsnip()
+
+rpart.plot(tree_fitted$fit, roundint = FALSE)
+```
+
+## Random Forest
+
+```{r}
+#| label: rf-tuning
+
+```
+
+```{r}
+#| label: rf-fit
+
+```
+
+## LDA
+
+```{r}
+#| label: lda-tuning
+
+```
+
+```{r}
+#| label: lda-fit
+
+```
+
+## QDA
+
+```{r}
+#| label: qda-tuning
+
+```
+
+```{r}
+#| label: qda-fit
+
+```
+
+# Second Question (College Clustering)
+
+## Recipes
+
+```{r}
+#| label: clustering-recipes
+
+cluster_recipe_pca <- recipe(~., data = df_imputed_reduced) %>%
+  update_role(university_name, new_role = "id") %>%
+  step_rm(ipeds, year, rank_bin) %>%
+  step_rm(all_nominal_predictors()) %>%
+  step_zv(all_numeric_predictors()) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_pca(all_numeric(), threshold = 0.8)
+```
+
+## K-Means
+
+```{r}
+#| label: kmeans
+ 
+set.seed(123)
+
+# k_lst <- seq(2, 15, 2)
+# 
+# kmeans_results <- list_rbind(map(k_lst, ~fit_kmeans(df_imputed_reduced, cluster_recipe_pca, .x)))
+# 
+# kmeans_results
+
+km_spec <- k_means(num_clusters = 5)
+
+km_wflow <- workflow() %>%
+  add_recipe(cluster_recipe_pca) %>%
+  add_model(km_spec)
+
+km_fitted <- km_wflow %>% fit(df_imputed_reduced)
+
+engine_fit <- km_fitted %>% 
+  extract_fit_engine()
+
+################################################################################
+
+# pca_output <- cluster_recipe_pca %>%
+#   prep() %$%
+#   steps %>%
+#   pluck(5) %$%
+#   res
+# 
+# pca_output %$%
+#   sdev %>%
+#   {cumsum(.^2) / sum(.^2)}
+
+# 
+# PC1 <- pca_output$rotation[, 1]
+# PC2 <- pca_output$rotation[, 2]
+# PC3 <- pca_output$rotation[, 3]
+# 
+# pc1_df <- data.frame(Variable = names(PC1), PC1 = PC1)
+# 
+# pc1_df %>%
+#   arrange(-abs(PC1))
+# 
+# ggplot(pc1_df, aes(x = Variable, y = 1, fill = PC1)) +
+#   geom_tile() +
+#   scale_fill_gradient(low = "white", high = "blue") +
+#   theme_minimal() +
+#   theme(axis.text.y = element_blank(), axis.ticks.y = element_blank()) +
+#   labs(title = "Heatmap of PC1", x = "Variables", y = "")
+
+################################################################################
+
+# cluster_means <- as.data.frame(df_imputed_reduced) %>%
+#   mutate(
+#     cluster = extract_cluster_assignment(engine_fit)$.cluster
+#   ) %>%
+#   group_by(cluster) %>%
+#   summarize(
+#     across(.cols = PCIP04:MD_EARN_WNE_MALE1_P9, 
+#            .fns = ~ mean(.x)
+#            )
+#     )
+# 
+# cluster_means_long <- cluster_means %>%
+#   pivot_longer(cols = PCIP04:MD_EARN_WNE_MALE1_P9, names_to = 'Feature', values_to = 'Mean')
+# 
+# cluster_means_long %>%
+#   ggplot(aes(x = Feature, y = cluster, fill = Mean)) +
+#     geom_tile() +
+#     scale_fill_viridis_c() +
+#     theme_minimal() +
+#     theme(axis.text.x = element_text(angle = 30, hjust = 1), 
+#           axis.title.x = element_blank()) +
+#     labs(title = 'Feature Mean Values by Cluster',
+#          y = 'Cluster',
+#          fill = 'Scaled Mean')
+
+################################################################################
+
+cluster_trained <- cluster_recipe_pca %>% 
+  prep(df_imputed_reduced)
+
+cluster_pcs <- cluster_trained %>% 
+  bake(df_imputed_reduced)
+
+################################################################################
+
+plot1 <- cluster_pcs %>%
+  mutate(extract_cluster_assignment(engine_fit),
+         rank_bin = df_imputed_reduced$rank_bin) %>%
+  ggplot(aes(x = PC02, y = PC01, color = rank_bin)) +
+  geom_point() +
+  theme_bw() +
+  labs(title = "College Clusters in PC1 by PC2 and PC2 by PC3", color = "Binned Rank") +
+  theme(axis.title.x = element_blank())
+
+plot2 <- cluster_pcs %>%
+  mutate(extract_cluster_assignment(engine_fit),
+         rank_bin = df_imputed_reduced$rank_bin) %>%
+  ggplot(aes(x = PC02, y = PC03, color = rank_bin)) +
+  geom_point() +
+  theme_bw() +
+  labs(color = "Binned Rank") 
+
+combined_plot <- plot1 + plot2 + 
+  plot_layout(ncol = 1, guides = "collect") & 
+  theme(legend.position = "right")
+
+combined_plot
+
+################################################################################
+
+plot1 <- cluster_pcs %>%
+  mutate(extract_cluster_assignment(engine_fit),
+         rank_bin = df_imputed_reduced$rank_bin) %>%
+  ggplot(aes(x = PC02, y = PC01, color = .cluster)) +
+  geom_point() +
+  theme_bw() +
+  labs(title = "College Clusters in PC1 by PC2 and PC2 by PC3", color = "Cluster") +
+  theme(axis.title.x = element_blank())
+
+plot2 <- cluster_pcs %>%
+  mutate(extract_cluster_assignment(engine_fit),
+         rank_bin = df_imputed_reduced$rank_bin) %>%
+  ggplot(aes(x = PC02, y = PC03, color = .cluster)) +
+  geom_point() +
+  theme_bw() +
+  labs(color = "Cluster") 
+
+combined_plot <- plot1 + plot2 + 
+  plot_layout(ncol = 1, guides = "collect") & 
+  theme(legend.position = "right")
+
+combined_plot
+```
+
