@@ -24,15 +24,15 @@ library(here)
 library(tidymodels)
 library(tidyclust)
 library(magrittr)
-library(readxl)
-library(janitor)
-library(naniar)
 library(rpart)
 library(rpart.plot)
 library(patchwork)
+library(leaps)
+library(discrim)
+library(ranger)
 ```
 
-# Data 
+# Data
 
 ```{r}
 #| label: read-in-data
@@ -61,19 +61,13 @@ df_imputed <- joined_data %>%
         .x
       ),
       .names = "{.col}"
-    )
+    ),
+    rank_bin = factor(rank_bin, levels = c("1-25", "26-50", "51-75", "76-100", "100+"))
   ) %>%
   ungroup()
-
-df_imputed %>%
-  summarise(across(where(is.numeric), ~ round(sum(is.na(.)) / nrow(df_imputed), 2))) %>%
-  pivot_longer(cols = everything(), 
-               names_to = 'Column', 
-               values_to = 'Proportion_Missing') %>%
-  arrange(-Proportion_Missing)
 ```
 
-## Variable Reduction 
+## Variable Reduction
 
 ### Recipes
 
@@ -167,6 +161,47 @@ df_imputed_reduced <- df_imputed %>%
 # Functions
 
 ```{r}
+#| label: model-fit-function
+
+fit_model <- function(data, data_cv, mod, rec, rec_name) {
+  
+  rec_wflow <- workflow() %>%
+    add_recipe(rec) %>%
+    add_model(mod)
+  
+  rec_fit <- rec_wflow %>% fit(data)
+  rec_fit_cv <- rec_wflow %>% fit_resamples(data_cv)
+  
+  roc_auc <- collect_metrics(rec_fit_cv) %>% filter(.metric == 'roc_auc') %>% pull(mean)
+
+  pred_output <- data %>%
+    mutate(predicted_response = predict(rec_fit, .)$.pred_class) 
+  
+  conf_matrix <- pred_output %>%
+    conf_mat(truth = rank_bin, estimate = predicted_response) %>%
+    tidy() %>%
+    pivot_wider(names_from = name, values_from = value)
+  
+  tp <- conf_matrix$cell_1_1[1]
+  fp <- conf_matrix$cell_1_2[1]
+  fn <- conf_matrix$cell_2_1[1]
+  tn <- conf_matrix$cell_2_2[1]
+
+  data.frame(
+    Recipe = rec_name,
+    ROC_AUC = roc_auc,
+    TN = tn,
+    FP = fp,
+    FN = fn,
+    TP = tp,
+    Precision = precision(pred_output, truth = rank_bin, estimate = predicted_response)$.estimate,
+    Recall = recall(pred_output, truth = rank_bin, estimate = predicted_response)$.estimate
+  )
+  
+}
+```
+
+```{r}
 #| label: test-k-function
 
 fit_kmeans <- function(data, recipe, k, counts = F) {
@@ -225,6 +260,67 @@ base_recipe_norm <- base_recipe %>%
   step_normalize(all_numeric_predictors())
 ```
 
+```{r}
+#| label: recipe-tuning
+
+models_forward <- regsubsets(rank_bin ~ ., 
+                             data = df_imputed_reduced[,-c(1, 2, 3)], 
+                             method = "forward", 
+                             nvmax = 100)
+
+forward_bics <- tibble(bic = summary(models_forward)$bic, 
+                    model = seq(from = 1, 
+                                to = 101, 
+                                by = 1
+                                )
+                    )
+
+min_bic <- slice_min(forward_bics, order_by = bic) %>%
+  pull(model)
+
+best_forward <- summary(models_forward)$outmat[min_bic, ]
+best_forward <- names(best_forward[best_forward == "*"])
+
+################################################################################
+
+models_backward <- regsubsets(rank_bin ~ ., 
+                             data = df_imputed_reduced[,-c(1, 2, 3)], 
+                             method = "backward", 
+                             nvmax = 100)
+
+backward_bics <- tibble(bic = summary(models_backward)$bic, 
+                    model = seq(from = 1, 
+                                to = 101, 
+                                by = 1
+                                )
+                    )
+
+min_bic <- slice_min(backward_bics, order_by = bic) %>%
+  pull(model)
+
+best_backward <- summary(models_backward)$outmat[min_bic, ]
+best_backward <- names(best_backward[best_backward == "*"])
+
+################################################################################
+
+forward_recipe_norm <- base_recipe %>%
+  step_select(all_of(c("rank_bin", best_forward)), skip = T) %>%
+  step_zv(all_numeric_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+
+backward_recipe_norm <- base_recipe %>%
+  step_select(all_of(c("rank_bin", best_backward)), skip = T) %>%
+  step_zv(all_numeric_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+
+################################################################################
+
+test_recipes <- list(full = base_recipe_norm, 
+                     best_forward = forward_recipe_norm,
+                     best_backward = backward_recipe_norm)
+```
+
+
 ## Decision Tree
 
 ```{r}
@@ -236,7 +332,7 @@ set.seed(123)
 df_imputed_reduced_cvs <- vfold_cv(df_imputed_reduced, v = 10)
 
 tree_grid <- grid_regular(cost_complexity(),
-                          tree_depth(),
+                          tree_depth(c(5, 30)),
                           min_n(),
                           levels = 5)
 
@@ -258,18 +354,44 @@ tree_grid_search <-
     metrics = metric_set(accuracy, roc_auc, precision, recall, gain_capture)
   )
 
-tree_grid_search %>% 
-  collect_metrics() %>%
+tree_out <- tree_grid_search %>% 
+  collect_metrics()
+
+write_csv(tree_out, 'dc_results.csv')
+```
+
+```{r}
+#| label: dc-tree-tune-results
+#| message: false
+
+tree_results <- read_csv(here("project", "dc_results.csv"))
+
+tree_results %>% 
   filter(.metric == "gain_capture") %>%
-  slice_max(mean, n = 10)
+  arrange(-mean, tree_depth)
+
+tree_results %>% 
+  filter(tree_depth == 5) %>%
+  group_by(.config) %>%
+  summarise(avg = mean(mean)) %>%
+  arrange(-avg)
+
+tree_results %>%
+  filter(.config == "Preprocessor1_Model061")
+
+tree_results %>%
+  filter(.config == "Preprocessor1_Model026")
+
+tree_results %>%
+  filter(.config == "Preprocessor1_Model029")
 ```
 
 ```{r}
 #| label: dc-fit
 
-tree_mod <- decision_tree(cost_complexity = 1.000000e-10,
-                          tree_depth = 15,
-                          min_n = 21) %>%
+tree_mod <- decision_tree(cost_complexity = 1e-10,
+                          tree_depth = 5,
+                          min_n = 11) %>%
   set_engine("rpart") %>%
   set_mode("classification")
 
@@ -282,11 +404,19 @@ tree_fit <- tree_wflow %>% fit(df_imputed_reduced)
 tree_fitted <- tree_fit %>% 
   extract_fit_parsnip()
 
-rpart.plot(tree_fitted$fit, roundint = FALSE)
+rpart.plot(
+  tree_fitted$fit,
+  box.palette="RdBu", 
+  shadow.col="gray", 
+  nn=TRUE,
+  roundint = FALSE
+)
 
-tree_mod <- decision_tree(cost_complexity = 1.000000e-10,
+################################################################################
+
+tree_mod <- decision_tree(cost_complexity = 1e-10,
                           tree_depth = 3,
-                          min_n = 21) %>%
+                          min_n = 11) %>%
   set_engine("rpart") %>%
   set_mode("classification")
 
@@ -299,14 +429,62 @@ tree_fit <- tree_wflow %>% fit(df_imputed_reduced)
 tree_fitted <- tree_fit %>% 
   extract_fit_parsnip()
 
-rpart.plot(tree_fitted$fit, roundint = FALSE)
+rpart.plot(
+  tree_fitted$fit,
+  box.palette="RdBu", 
+  shadow.col="gray", 
+  nn=TRUE,
+  roundint = FALSE
+)
 ```
+
+
 
 ## Random Forest
 
 ```{r}
 #| label: rf-tuning
+#| eval: false
 
+set.seed(123)
+
+df_imputed_reduced_cvs <- vfold_cv(df_imputed_reduced, v = 10)
+
+rf_grid <- grid_regular(mtry(c(1, 150)),
+                        min_n(), 
+                        levels = 10)
+
+rf_mod_tune <- rand_forest(mtry = tune(), 
+                           min_n = tune(),
+                           trees = 10) %>%
+  set_engine("ranger", importance = 'impurity') %>%
+  set_mode("classification")
+
+rf_wflow_tune <- workflow() %>%
+  add_model(rf_mod_tune) %>% 
+  add_recipe(base_recipe)
+
+rf_grid_search <-
+  tune_grid(
+    rf_wflow_tune,
+    resamples = df_imputed_reduced_cvs,
+    grid = rf_grid,
+    metrics = metric_set(accuracy, roc_auc, precision, recall, gain_capture)
+  )
+
+rf_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  slice_max(mean, n = 5)
+
+rf_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "roc_auc", mean > 0.97) %>%
+  ggplot() +
+    geom_line(aes(x = min_n, y = mean, color = factor(mtry))) +
+    theme_bw() +
+    labs(y = "ROC AUC",
+         color = "mtry")
 ```
 
 ```{r}
@@ -319,18 +497,55 @@ rpart.plot(tree_fitted$fit, roundint = FALSE)
 ```{r}
 #| label: lda-tuning
 
+set.seed(123)
+
+df_imputed_reduced_cvs <- vfold_cv(df_imputed_reduced, v = 10)
+
+lda_mod <- discrim_linear() %>%
+  set_engine("MASS") %>%
+  set_mode("classification")
+
+results_lda <- list_rbind(map2(test_recipes, names(test_recipes), ~fit_model(df_imputed_reduced, df_imputed_reduced_cvs, lda_mod, .x, .y)))
+
+results_lda
 ```
 
 ```{r}
 #| label: lda-fit
 
+lda_mod <- discrim_linear() %>%
+  set_engine("MASS") %>%
+  set_mode("classification")
+
+lda_wflow <- workflow() %>%
+  add_recipe(base_recipe_norm) %>%
+  add_model(lda_mod)
+
+lda_fit <- lda_wflow %>% fit(df_imputed_reduced)
+
+lds <- lda_fit %>%
+  extract_fit_parsnip() %$%
+  fit %$%
+  scale
 ```
 
 ## QDA
 
 ```{r}
 #| label: qda-tuning
+#| eval: false
 
+set.seed(123)
+
+df_imputed_reduced_cvs <- vfold_cv(df_imputed_reduced, v = 10)
+
+qda_mod <- discrim_regularized(frac_common_cov = 0) %>% 
+  set_engine('klaR') %>% 
+  set_mode('classification')
+
+results_qda <- list_rbind(map2(test_recipes, names(test_recipes), ~fit_model(df_imputed_reduced, df_imputed_reduced_cvs, qda_mod, .x, .y)))
+
+results_qda
 ```
 
 ```{r}
@@ -354,49 +569,25 @@ cluster_recipe_pca <- recipe(~., data = df_imputed_reduced) %>%
   step_pca(all_numeric(), threshold = 0.8)
 ```
 
-## K-Means
+## PCA
 
 ```{r}
-#| label: kmeans
- 
-set.seed(123)
+#| label: PCA-analysis
 
-# k_lst <- seq(2, 15, 2)
-# 
-# kmeans_results <- list_rbind(map(k_lst, ~fit_kmeans(df_imputed_reduced, cluster_recipe_pca, .x)))
-# 
-# kmeans_results
+pca_output <- cluster_recipe_pca %>%
+  prep() %$%
+  steps %>%
+  pluck(5) %$%
+  res
 
-km_spec <- k_means(num_clusters = 5)
+PC1 <- pca_output$rotation[, 1]
+PC2 <- pca_output$rotation[, 2]
+PC3 <- pca_output$rotation[, 3]
 
-km_wflow <- workflow() %>%
-  add_recipe(cluster_recipe_pca) %>%
-  add_model(km_spec)
+pc1_df <- data.frame(Variable = names(PC1), PC1 = PC1)
+pc2_df <- data.frame(Variable = names(PC2), PC2 = PC2)
+pc3_df <- data.frame(Variable = names(PC3), PC3 = PC3)
 
-km_fitted <- km_wflow %>% fit(df_imputed_reduced)
-
-engine_fit <- km_fitted %>% 
-  extract_fit_engine()
-
-################################################################################
-
-# pca_output <- cluster_recipe_pca %>%
-#   prep() %$%
-#   steps %>%
-#   pluck(5) %$%
-#   res
-# 
-# pca_output %$%
-#   sdev %>%
-#   {cumsum(.^2) / sum(.^2)}
-
-# 
-# PC1 <- pca_output$rotation[, 1]
-# PC2 <- pca_output$rotation[, 2]
-# PC3 <- pca_output$rotation[, 3]
-# 
-# pc1_df <- data.frame(Variable = names(PC1), PC1 = PC1)
-# 
 # pc1_df %>%
 #   arrange(-abs(PC1))
 # 
@@ -415,7 +606,7 @@ engine_fit <- km_fitted %>%
 #   ) %>%
 #   group_by(cluster) %>%
 #   summarize(
-#     across(.cols = PCIP04:MD_EARN_WNE_MALE1_P9, 
+#     across(.cols = PCIP04:MD_EARN_WNE_MALE1_P9,
 #            .fns = ~ mean(.x)
 #            )
 #     )
@@ -428,13 +619,303 @@ engine_fit <- km_fitted %>%
 #     geom_tile() +
 #     scale_fill_viridis_c() +
 #     theme_minimal() +
-#     theme(axis.text.x = element_text(angle = 30, hjust = 1), 
+#     theme(axis.text.x = element_text(angle = 30, hjust = 1),
 #           axis.title.x = element_blank()) +
 #     labs(title = 'Feature Mean Values by Cluster',
 #          y = 'Cluster',
 #          fill = 'Scaled Mean')
 
 ################################################################################
+```
+
+### PC1
+
+Key High Positive Loadings:
+
+MD_EARN_WNE_MALE1_P8, MD_EARN_WNE_MALE0_P9:
+
+- Median earnings of male students 8 and 9 years after enrollment.
+- Suggests that PC1 is linked to post-graduation financial success.
+
+GT_THRESHOLD_P8:
+
+- Proportion of students earning above a certain threshold 8 years after entry.
+- Reinforces the focus on financial outcomes.
+
+INEXPFTE:
+
+- Instructional expenditures per full-time equivalent student.
+- Highlights institutional investment in education quality.
+
+CONTROL:
+
+- Indicator for public/private governance.
+- Points to institutional governance affecting outcomes.
+
+Key Negative Loadings:
+
+UGDS, UGDS_MEN, UGDS_WOMEN:
+
+- Total undergraduate enrollment and gender breakdown.
+- May represent a shift away from large, highly diverse institutions.
+
+HI_INC_YR3_N and NOPELL_YR8_N:
+
+- Number of high-income students and those not receiving Pell Grants.
+- Suggests that institutions with fewer high-income or Pell-ineligible students score lower on PC1, indicating focus on equity or broader socioeconomic representation.
+
+PPTUG_EF and FTFTPCTPELL:
+
+- Proportions of part-time undergraduates and Pell Grant recipients.
+- May indicate PC1 reflects a gradient of institutional access or inclusivity.
+
+Colleges with High PC1 Values:
+
+High Financial Outcomes:
+
+- Graduates, particularly males, earning high median incomes (MD_EARN_WNE_MALE1_P8, GT_THRESHOLD_P8).
+- A significant proportion of students surpassing income thresholds post-graduation.
+
+Higher Institutional Investment:
+
+- High instructional expenditures per student (INEXPFTE).
+- Likely to have strong academic programs and resources.
+
+Exclusive or Prestigious Institutions:
+
+- Likely private, selective, or highly-ranked public institutions (CONTROL suggests public/private differentiation).
+- Smaller, more focused student bodies (UGDS and related demographics have negative loadings).
+
+Low Proportion of Part-Time and Pell-Grant Recipients:
+
+- Lower focus on underserved populations (FTFTPCTPELL, PPTUG_EF).
+- Likely cater to a more affluent or traditional student demographic.
+
+Examples: Ivy League schools, top-tier private universities, and prestigious public institutions (e.g., University of Michigan or UC Berkeley).
+
+Colleges with Low PC1 Values:
+
+Lower Financial Outcomes:
+
+- Graduates earning less median income or failing to meet income thresholds.
+- Likely linked to regional job markets or less competitive programs.
+
+Lower Institutional Investment:
+
+- Limited resources for academic programs (INEXPFTE).
+- Potentially community colleges, regional universities, or institutions with lower tuition revenue.
+
+Accessible and Inclusive Institutions:
+
+- Larger, diverse student bodies (UGDS, UGDS_MEN, UGDS_WOMEN positively associated with low PC1 values).
+- Higher proportions of part-time and Pell Grant recipients (PPTUG_EF, FTFTPCTPELL).
+
+Focus on Socioeconomic Representation:
+
+- Serve a broader range of income levels (HI_INC_YR3_N and NOPELL_YR8_N negatively associated with PC1).
+
+Examples: Community colleges, state universities with open enrollment, and colleges in underserved areas focusing on access rather than prestige.
+
+Summary:
+
+- High PC1 Colleges: Wealthier, prestigious institutions emphasizing elite outcomes and resources.
+- Low PC1 Colleges: Inclusive, access-focused institutions catering to a broader population but with less financial impact post-graduation.
+
+### PC2
+
+Key High Positive Loadings:
+
+PCTPELL, PCTPELL_DCS, and FTFTPCTPELL:
+
+- These represent the percentage of students receiving Pell Grants, a proxy for the economic diversity of the student body, highlighting institutions that serve lower-income populations.
+
+POVERTY_RATE:
+
+- The poverty rate in the institution's location suggests a socioeconomic focus or mission to serve areas with lower economic opportunity.
+
+UGDS_HISP, UGDS_BLACK, HSI, AANAPII:
+
+- Demographics of Hispanic, Black, and Native Hawaiian/Pacific Islander students point toward institutions serving minority groups and promoting diversity.
+
+LO_INC_YR3_N, CDR3, COUNT_WNE_5YR:
+
+- Metrics related to lower-income students and long-term student outcomes, suggesting a focus on retaining and supporting these students.
+
+UNEMP_RATE:
+
+- Higher unemployment rates in the area may indicate institutions located in economically disadvantaged regions.
+
+Key Low Negative Loadings:
+
+MD_FAMINC, FAMINC, PCT_BA, MD_EARN_WNE_P6:
+
+- Negative loadings for median family income, educational attainment rates in the region, and median student earnings suggest these institutions are not primarily catering to affluent or high-income populations.
+
+PCT_BORN_US:
+
+- A negative association may imply these institutions serve a more immigrant-based or international population.
+
+CONTROL:
+
+- Negative loadings for public/private control suggest public institutions may score lower, while private nonprofit or for-profit colleges score higher.
+
+DBRR4_PP_UG_DEN:
+
+- Debt-related metrics have a negative loading, possibly indicating less reliance on student loans.
+
+Types of Colleges with High PC2 Values:
+
+Focus on Serving Underserved Communities:
+
+- Institutions with a high proportion of Pell Grant recipients and minority students.
+- Likely located in regions with higher poverty and unemployment rates.
+
+Community and State Colleges:
+
+- Public institutions that emphasize accessibility, inclusivity, and supporting economically disadvantaged students.
+
+Hispanic-Serving Institutions (HSIs) and Minority-Serving Institutions (MSIs):
+
+- Colleges serving racially diverse and underprivileged student populations.
+
+Examples: Community colleges, regional public universities, and historically Black colleges and universities (HBCUs).
+
+Types of Colleges with Low PC2 Values:
+
+Affluent and Elite Institutions:
+
+- Institutions with lower proportions of Pell Grant recipients and minority students, likely catering to higher-income families.
+
+Prestigious Private Colleges:
+
+- Schools with strong earnings outcomes and low diversity, emphasizing traditional academic prestige.
+
+Highly Selective Institutions:
+
+- These institutions may have higher barriers to entry for underserved populations.
+
+Examples: Ivy League schools, private liberal arts colleges, and top-tier research universities.
+
+Summary:
+
+- High PC2: Institutions that focus on access, diversity, and serving economically disadvantaged communities.
+- Low PC2: Institutions aligned with affluence, selectivity, and traditional measures of academic or economic success.
+
+### PC1 v. PC2
+
+Key Differences:
+
+```{r}
+# Load the kableExtra package
+library(kableExtra)
+
+# Create the table
+data.frame(
+  Aspect = c(
+    "Focus",
+    "High Values",
+    "Low Values",
+    "Drivers",
+    "Demographics",
+    "Regional Context"
+  ),
+  PC1 = c(
+    "Institutional prestige and financial outcomes",
+    "Wealthy, selective, prestigious institutions",
+    "Broad-access, inclusive institutions",
+    "Graduate earnings, institutional resources",
+    "Affluent, traditional students",
+    "Less relevant"
+  ),
+  PC2 = c(
+    "Socioeconomic and demographic diversity",
+    "Inclusive, access-oriented institutions",
+    "Elite, affluent, and selective institutions",
+    "Pell Grant percentages, minority enrollment",
+    "Low-income and minority students",
+    "High poverty/unemployment areas emphasized"
+  )
+) %>%
+  kable(
+    caption = "Comparison of PC1 and PC2",
+    col.names = c("Aspect", "PC1", "PC2"),
+    booktabs = TRUE
+  ) %>%
+  kable_styling(full_width = FALSE, position = "center")
+
+```
+
+Summary:
+
+- PC1 is a measure of traditional institutional success—economic outcomes, resource investment, and prestige.
+- PC2 emphasizes the institution's mission to serve diverse and underserved populations, reflecting access and inclusivity.
+
+## K-Means
+
+```{r}
+#| label: tune-kmeans
+
+set.seed(123)
+
+k_lst <- seq(2, 25, 1)
+
+results_lst <- map(k_lst, ~fit_kmeans(df_imputed_reduced, cluster_recipe_pca, .x, T))
+
+results_df <- map(results_lst, 'results') %>% bind_rows()
+counts_df <- map(results_lst, 'counts') %>% bind_rows()
+
+results_df
+counts_df
+```
+
+```{r}
+#| label: kmeans-check
+#| wanring: false
+
+ggplot(results_df, aes(x = k, y = Total_Withiness)) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_vline(xintercept = 5, color = "firebrick") +
+  labs(
+    title = "Elbow Method for Optimal Clusters",
+    x = "Number of Clusters (k)",
+    y = "Total Within-Cluster Sum of Squares"
+  ) +
+  theme_bw()
+
+################################################################################
+
+counts_long <- counts_df %>%
+  pivot_longer(-k, names_to = "Cluster", values_to = "Size") %>% 
+  filter(k %in% c(5, 6)) %>%
+  drop_na()
+
+ggplot(counts_long, aes(x = as.factor(k), y = Size, fill = Cluster)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Cluster Size Counts",
+    x = "Number of Clusters (k)",
+    y = "Cluster Size",
+    fill = "Cluster"
+  ) +
+  theme_bw()
+```
+
+```{r}
+#| label: kmeans
+ 
+set.seed(123)
+
+km_spec <- k_means(num_clusters = 5)
+
+km_wflow <- workflow() %>%
+  add_recipe(cluster_recipe_pca) %>%
+  add_model(km_spec)
+
+km_fitted <- km_wflow %>% fit(df_imputed_reduced)
+
+engine_fit <- km_fitted %>% 
+  extract_fit_engine()
 
 cluster_trained <- cluster_recipe_pca %>% 
   prep(df_imputed_reduced)
@@ -491,5 +972,46 @@ combined_plot <- plot1 + plot2 +
   theme(legend.position = "right")
 
 combined_plot
-```
 
+################################################################################
+
+km_spec <- k_means(num_clusters = 6)
+
+km_wflow <- workflow() %>%
+  add_recipe(cluster_recipe_pca) %>%
+  add_model(km_spec)
+
+km_fitted <- km_wflow %>% fit(df_imputed_reduced)
+
+engine_fit <- km_fitted %>% 
+  extract_fit_engine()
+
+cluster_trained <- cluster_recipe_pca %>% 
+  prep(df_imputed_reduced)
+
+cluster_pcs <- cluster_trained %>% 
+  bake(df_imputed_reduced)
+
+plot1 <- cluster_pcs %>%
+  mutate(extract_cluster_assignment(engine_fit),
+         rank_bin = df_imputed_reduced$rank_bin) %>%
+  ggplot(aes(x = PC02, y = PC01, color = .cluster)) +
+  geom_point() +
+  theme_bw() +
+  labs(title = "College Clusters in PC1 by PC2 and PC2 by PC3", color = "Cluster") +
+  theme(axis.title.x = element_blank())
+
+plot2 <- cluster_pcs %>%
+  mutate(extract_cluster_assignment(engine_fit),
+         rank_bin = df_imputed_reduced$rank_bin) %>%
+  ggplot(aes(x = PC02, y = PC03, color = .cluster)) +
+  geom_point() +
+  theme_bw() +
+  labs(color = "Cluster") 
+
+combined_plot <- plot1 + plot2 + 
+  plot_layout(ncol = 1, guides = "collect") & 
+  theme(legend.position = "right")
+
+combined_plot
+```
