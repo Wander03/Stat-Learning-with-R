@@ -1043,13 +1043,17 @@ plot1 <- cluster_pcs %>%
   ggplot(aes(x = PC01, y = PC02, color = rank_bin)) +
   geom_point() +
   theme_bw() +
-  labs(title = "College Clusters in PC1 by PC2", subtitle = "Colored by Binned Rank", color = "Binned Rank") +
+  labs(title = "College Clusters in PC1 by PC2", 
+       subtitle = "Colored by Binned Rank", 
+       color = "Binned Rank") +
+  scale_x_continuous(limits = c(-30, 15)) +
+  scale_y_continuous(limits = c(-15, 10)) +
   theme(axis.title.x = element_blank(),
         axis.title.y = element_blank(),
         axis.ticks.x = element_blank(),
-        axis.ticks.y = element_blank(),
+        # axis.ticks.y = element_blank(),
         axis.text.x = element_blank(),
-        axis.text.y = element_blank(),
+        # axis.text.y = element_blank(),
         legend.position = "none") +
   scale_color_manual(values = c("1-25" = "#FFC634", "26-50" = "#EE4731", "51-75" = "#2AB99D", 
                                 "76-100" = "#0363EF", "100+" = "#502C84")) 
@@ -1061,12 +1065,14 @@ plot2 <- cluster_pcs %>%
   geom_point() +
   theme_bw() +
   labs(color = "Cluster", subtitle = "Colored by K-Means Cluster") +
+  scale_x_continuous(limits = c(-30, 15)) +
+  scale_y_continuous(limits = c(-15, 10)) +
   theme(axis.title.x = element_blank(),
         axis.title.y = element_blank(),
-        axis.ticks.x = element_blank(),
-        axis.ticks.y = element_blank(),
-        axis.text.x = element_blank(),
-        axis.text.y = element_blank(),
+        # axis.ticks.x = element_blank(),
+        # axis.ticks.y = element_blank(),
+        # axis.text.x = element_blank(),
+        # axis.text.y = element_blank(),
         legend.position = "none") + 
   scale_color_manual(values = c("Cluster_1" = "#0363EF", "Cluster_2" = "#2AB99D", "Cluster_3" = "#EE4731", 
                                 "Cluster_4" = "#FFC634", "Cluster_5" = "#502C84")) 
