@@ -32,7 +32,11 @@ library(discrim)
 library(ranger)
 ```
 
+
+
 # Data
+
+
 
 ```{r}
 #| label: read-in-data
@@ -42,7 +46,11 @@ library(ranger)
 joined_data <- read_csv(here('project', 'joined_data.csv'))
 ```
 
+
+
 ## Impute Means
+
+
 
 ```{r}
 #| label: means
@@ -67,9 +75,13 @@ df_imputed <- joined_data %>%
   ungroup()
 ```
 
+
+
 ## Variable Reduction
 
 ### Recipes
+
+
 
 ```{r}
 #| label: recipes
@@ -87,7 +99,11 @@ base_recipe_norm <- base_recipe %>%
   step_normalize(all_numeric_predictors())
 ```
 
+
+
 ### LASSO Regression
+
+
 
 ```{r}
 #| label: tuning-lasso
@@ -158,7 +174,11 @@ df_imputed_reduced <- df_imputed %>%
   select(ipeds, university_name, year, rank_bin, all_of(keep_vars))
 ```
 
+
+
 # Functions
+
+
 
 ```{r}
 #| label: model-fit-function
@@ -243,9 +263,13 @@ fit_kmeans <- function(data, recipe, k, counts = F) {
 }
 ```
 
+
+
 # Main Question (Rank Prediction)
 
 ## Recipes
+
+
 
 ```{r}
 #| label: prediction-recipes
@@ -321,7 +345,11 @@ test_recipes <- list(full = base_recipe_norm,
 ```
 
 
+
+
 ## Decision Tree
+
+
 
 ```{r}
 #| label: dc-tune
@@ -440,7 +468,11 @@ rpart.plot(
 
 
 
+
+
 ## Random Forest
+
+
 
 ```{r}
 #| label: rf-tuning
@@ -492,7 +524,11 @@ rf_grid_search %>%
 
 ```
 
+
+
 ## LDA
+
+
 
 ```{r}
 #| label: lda-tuning
@@ -529,7 +565,11 @@ lds <- lda_fit %>%
   scale
 ```
 
+
+
 ## QDA
+
+
 
 ```{r}
 #| label: qda-tuning
@@ -553,9 +593,13 @@ results_qda
 
 ```
 
+
+
 # Second Question (College Clustering)
 
 ## Recipes
+
+
 
 ```{r}
 #| label: clustering-recipes
@@ -569,7 +613,11 @@ cluster_recipe_pca <- recipe(~., data = df_imputed_reduced) %>%
   step_pca(all_numeric(), threshold = 0.8)
 ```
 
+
+
 ## PCA
+
+
 
 ```{r}
 #| label: PCA-analysis
@@ -627,6 +675,8 @@ pc3_df <- data.frame(Variable = names(PC3), PC3 = PC3)
 
 ################################################################################
 ```
+
+
 
 ### PC1
 
@@ -805,6 +855,8 @@ Summary:
 
 Key Differences:
 
+
+
 ```{r}
 # Load the kableExtra package
 library(kableExtra)
@@ -845,12 +897,16 @@ data.frame(
 
 ```
 
+
+
 Summary:
 
 - PC1 is a measure of traditional institutional success—economic outcomes, resource investment, and prestige.
 - PC2 emphasizes the institution's mission to serve diverse and underserved populations, reflecting access and inclusivity.
 
 ## K-Means
+
+
 
 ```{r}
 #| label: tune-kmeans
