@@ -1,0 +1,319 @@
+---
+title: "Midterm 2"
+author: "Andrew Kerr"
+format: 
+  html:
+    toc: true
+    toc-title: "Outline"
+    toc-depth: 3
+    code-fold: true
+    code-line-numbers: true
+    code-tools: true
+    theme:
+      light: flatly
+      dark: darkly
+    default: dark
+embed-resources: true
+editor: source
+eval: false
+---
+
+NOTE: what to do abt missing data?
+
+```{r}
+#| label: libraries-r
+#| message: false
+#| eval: true
+
+library(tidyverse)
+library(tidymodels)
+library(glmnet)
+library(here)
+library(janitor)
+library(themis)
+library(leaps)
+library(discrim)
+```
+
+# Data
+
+## Read-in
+
+```{r}
+#| label: data-read-in
+#| message: false
+#| eval: true
+
+house_train <- read_csv(here('data', 'midterm_2', 'train_new.csv')) %>% clean_names()
+house_test <- read_csv(here('data', 'midterm_2', 'test_new.csv')) %>% clean_names()
+```
+
+## Cleaning
+
+```{r}
+#| label: missing-data
+#| eval: true
+
+house_train %>%
+  summarise(across(everything(), ~ sum(is.na(.)) / nrow(house_train))) %>%
+  pivot_longer(cols = everything(), 
+               names_to = 'Column', 
+               values_to = 'Proportion_Missing') %>%
+  filter(Proportion_Missing != 0) %>%
+  arrange(-Proportion_Missing)
+
+house_train %>%
+  filter(is.na(lot_frontage))
+
+house_train %>%
+  filter(is.na(electrical))
+```
+
+```{r}
+#| label: data-cleaning
+#| eval: true
+
+factor_cols <- c('street',
+                 'neighborhood',
+                 'bldg_type',
+                 'house_style',
+                 'roof_style',
+                 'heating',
+                 'central_air',
+                 'electrical',
+                 'functional',
+                 'sale_type'
+                 )
+
+house_train <- house_train %>%
+  mutate(
+    across(.cols = all_of(factor_cols), .fns = ~factor(.))
+  )
+
+house_test <- house_test %>%
+  mutate(
+    across(.cols = any_of(factor_cols), .fns = ~factor(.))
+  )
+```
+
+```{r}
+#| label: check-possible-factors
+#| message: false
+
+possible_factor_cols <- c('overall_qual',
+                          'overall_cond',
+                          'full_bath',
+                          'half_bath',
+                          'bedroom_abv_gr',
+                          'tot_rms_abv_grd'
+                          )
+
+GGally::ggpairs(house_train, columns = c(possible_factor_cols, 'sale_price'))
+```
+
+```{r}
+#| label: check-possible-factors
+#| eval: true
+
+factor_cols <- c('overall_cond', 'bedroom_abv_gr')
+
+house_train <- house_train %>%
+  mutate(
+    across(.cols = all_of(factor_cols), .fns = ~factor(.))
+  )
+
+house_test <- house_test %>%
+  mutate(
+    across(.cols = any_of(factor_cols), .fns = ~factor(.))
+  )
+```
+
+# Functions
+
+```{r}
+
+```
+
+# Modeling
+
+## Starting Recipes
+
+```{r}
+#| label: recipes
+
+recipe_full <- recipe(sale_price ~ ., data = house_train) %>%
+    update_role(pid, new_role = "id variable")
+
+recipe_full_norm <- recipe_full %>% 
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors())
+```
+
+## Recipe Tuning
+
+```{r}
+#| label: variable-selection
+
+################################################################################
+
+# Create all pairwise interaction terms
+# interaction_data <- model.matrix(~ .^2, data = house_train[,c(-1,-2)])
+
+# Convert back to a data frame (remove the intercept column if present)
+# interaction_data <- cbind(house_train[,1], as.data.frame(interaction_data[,-1]))
+
+# The above 2 lines of code are originally generated from ChatGPT
+
+################################################################################
+
+models_forward <- regsubsets(sale_price ~ ., 
+                             data = house_train[,-2], 
+                             method = "forward", 
+                             nvmax = 100)
+
+forward_bics <- tibble(bic = summary(models_forward)$bic, 
+                    model = seq(from = 1, 
+                                to = 93, 
+                                by = 1
+                                )
+                    )
+
+min_bic <- slice_min(forward_bics, order_by = bic) %>%
+  pull(model)
+
+best_forward <- summary(models_forward)$outmat[min_bic, ]
+best_forward_lst <- names(best_forward[best_forward == "*"])
+
+################################################################################
+
+models_backward <- regsubsets(sale_price ~ ., 
+                             data = house_train[,-2], 
+                             method = "backward", 
+                             nvmax = 100)
+
+backward_bics <- tibble(bic = summary(models_backward)$bic, 
+                    model = seq(from = 1, 
+                                to = 93, 
+                                by = 1
+                                )
+                    )
+
+min_bic <- slice_min(backward_bics, order_by = bic) %>%
+  pull(model)
+
+best_backward <- summary(models_backward)$outmat[min_bic, ]
+best_backward_lst <- names(best_backward[best_backward == "*"])
+
+################################################################################
+
+models_subset <- regsubsets(sale_price ~ ., 
+                     data = house_train[,-2], 
+                     method = "exhaustive",
+                     nvmax = 5,
+                     really.big = T)
+
+subset_bics <- tibble(bic = summary(models_subset)$bic, 
+                    model = seq(from = 1, 
+                                to = 6, 
+                                by = 1
+                                )
+                    )
+
+min_bic <- slice_min(subset_bics, order_by = bic) %>%
+  pull(model)
+
+best_subset <- summary(models_subset)$outmat[min_bic, ]
+best_subset_lst <- names(best_subset[best_subset == "*"])
+```
+
+```{r}
+#| label: new-recipes
+
+recipe_forward <- recipe_full %>%
+  step_select(best_forward_lst)
+
+recipe_forward_norm <- recipe_forward %>% 
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors())
+
+################################################################################
+
+recipe_backward <- recipe_full %>%
+  step_select(best_backward_lst)
+
+recipe_backward_norm <- recipe_backward %>% 
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors())
+
+################################################################################
+
+recipe_best_subset <- recipe_full %>%
+  step_select(best_subset_lst)
+
+recipe_best_subset_norm <- recipe_best_subset %>% 
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors())
+```
+
+```{r}
+#| label: recipe-list
+
+test_recipes <- list(full = recipe_full_norm, 
+                     best_subset = recipe_best_subset_norm,
+                     best_forward = recipe_forward_norm,
+                     best_backward = recipe_backward_norm)
+```
+
+## Cross Validation
+
+```{r}
+#| label: initialize-CV
+
+set.seed(123)
+
+house_cvs <- vfold_cv(house_train, v = 10)
+```
+
+## Random Forest Model
+
+### Full Model
+
+```{r}
+#| lablel: RF-tune-full
+
+rf_grid <- grid_regular(mtry(c(1, ncol(house_train) - 2)),
+                        min_n(), 
+                        levels = 10)
+
+rf_mod_tune <- rand_forest(mtry = tune(), 
+                           min_n = tune(),
+                           trees = 10) %>%
+  set_engine("ranger") %>%
+  set_mode("regression")
+
+rf_wflow_tune <- workflow() %>%
+  add_model(rf_mod_tune) %>% 
+  add_recipe(recipe_full)
+
+rf_grid_search <-
+  tune_grid(
+    rf_wflow_tune,
+    resamples = house_cvs,
+    grid = rf_grid,
+    metrics = metric_set(rmse)
+  )
+
+rf_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  slice_max(mean, n = 5)
+
+rf_grid_search %>% 
+  collect_metrics() %>%
+  filter(.metric == "roc_auc", mean > 0.8) %>%
+  ggplot() +
+    geom_line(aes(x = min_n, y = mean, color = factor(mtry))) +
+    geom_hline(yintercept = .83, color = 'firebrick', linetype = 'dashed') +
+    theme_bw()
+```
+
